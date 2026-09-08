@@ -31,10 +31,7 @@ async function refreshRecords() {
     $('#record-player-total').textContent = records.summary.players || 0;
     $('#roll-total').textContent = records.summary.rolls || 0;
     $('#bust-total').textContent = records.summary.busts || 0;
-    $('#export-records').disabled = !records.configured;
-    $('#records-status').textContent = records.configured
-      ? 'PostgreSQL is connected. These records survive server restarts.'
-      : 'Local JSON mode is active. Add DATABASE_URL when deploying to enable permanent records.';
+    $('#records-status').textContent = 'Match history is saved locally with the game.';
     $('#recent-records').innerHTML = records.recent.length
       ? records.recent.map(match => `<div class="record-row"><span><strong>${escapeHtml(match.winner_name || 'No winner')}</strong> · ${escapeHtml(match.mode)} · ${escapeHtml(match.room_code)}</span><small>${match.winner_score ?? 0} pts · ${escapeHtml(formatDate(match.ended_at))}</small></div>`).join('')
       : '<p>No completed matches recorded yet.</p>';
@@ -42,27 +39,8 @@ async function refreshRecords() {
       ? records.leaderboard.map((player, index) => `<div class="record-row"><span><strong>#${index + 1} ${escapeHtml(player.player_name)}</strong></span><small>${player.wins} wins · ${player.games_played} games</small></div>`).join('')
       : '<p>Leaderboard appears after the first recorded match.</p>';
   } catch {
-    $('#records-status').textContent = 'Records will activate after the PostgreSQL server update is deployed.';
-    $('#export-records').disabled = true;
+    $('#records-status').textContent = 'Saved match records are temporarily unavailable.';
   }
-}
-
-async function downloadRecords() {
-  const response = await fetch('/api/admin/records.csv?limit=20000', {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Could not export records.');
-  }
-  const blob = await response.blob();
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = 'dice-night-match-records.csv';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(link.href);
 }
 
 function roomCard(room) {
@@ -78,7 +56,7 @@ function roomCard(room) {
   const spectators = (room.spectators || []).map(person => `<button class="spectator-admin" data-remove-spectator="${person.id}" title="Remove spectator">◉ ${escapeHtml(person.name)} ×</button>`).join('');
   return `<article class="room-card" data-room="${room.code}">
     <div class="room-head"><div class="room-title"><strong class="room-code">${room.code}</strong><span class="phase ${room.paused ? 'paused' : ''}">${room.paused ? 'paused' : room.phase}</span><small>${room.players.length}/9 players</small></div>
-      <div class="room-tools">${controls}<select data-mode ${room.phase !== 'lobby' ? 'disabled' : ''}>${['classic','blitz','marathon'].map(mode => `<option value="${mode}" ${room.mode?.id === mode ? 'selected' : ''}>${mode}</option>`).join('')}</select><select data-timer><option disabled>Turn time</option>${[5,7,10,15,20,30,45,60].map(seconds => `<option value="${seconds}" ${room.turnDurationMs === seconds * 1000 ? 'selected' : ''}>${seconds} sec</option>`).join('')}</select><button data-action="clear_chat">Clear chat</button><button data-action="reset">Reset</button><button class="danger" data-action="close">Close room</button></div></div>
+      <div class="room-tools">${controls}<select data-mode ${room.phase !== 'lobby' ? 'disabled' : ''}>${['classic','blitz','marathon','showdown'].map(mode => `<option value="${mode}" ${room.mode?.id === mode ? 'selected' : ''}>${mode}</option>`).join('')}</select><select data-timer><option disabled>Turn time</option>${[5,10,15,20,30,45,60].map(seconds => `<option value="${seconds}" ${room.turnDurationMs === seconds * 1000 ? 'selected' : ''}>${seconds} sec</option>`).join('')}</select><button data-action="clear_chat">Clear chat</button><button data-action="reset">Reset</button><button class="danger" data-action="close">Close room</button></div></div>
     <div class="room-body"><div class="players">${players}<div>${spectators}</div></div><aside class="broadcast"><label>ANNOUNCE TO ROOM</label><form data-announce><input maxlength="120" placeholder="Message every player…"><button>Send</button></form><p>Latest: ${escapeHtml(room.message)}</p></aside></div>
   </article>`;
 }
@@ -163,9 +141,6 @@ $('#login-form').addEventListener('submit', async event => {
 
 $('#refresh-button').addEventListener('click', async () => {
   await Promise.all([refresh(), refreshRecords()]);
-});
-$('#export-records').addEventListener('click', async () => {
-  try { await downloadRecords(); } catch (error) { toast(error.message); }
 });
 $('#lock-button').addEventListener('click', () => {
   sessionStorage.removeItem('dice-night-admin');

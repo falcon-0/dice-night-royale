@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
-const state = { mode: 'create', joinRole: 'player', code: null, playerId: null, sessionToken: null, rejoinCode: null, profileToken: localStorage.getItem('dice-night:profile-token'), profile: null, room: null, polling: null, acting: false, chatOpen: false, timelineOpen: false, chatSeen: null, celebratedWinner: null, seenReactions: new Set() };
+const state = { mode: 'create', joinRole: 'player', code: null, playerId: null, sessionToken: null, rejoinCode: null, profileToken: localStorage.getItem('dice-night:profile-token'), profile: null, room: null, polling: null, acting: false, chatOpen: false, timelineOpen: false, chatSeen: null, lastChatId: null, celebratedWinner: null, leaderboardSort: 'wins', soundEnabled: localStorage.getItem('dice-night:sound') !== 'off', seenReactions: new Set() };
 let audioContext;
+const activeAudioNodes = new Set();
 let serverOffset = 0;
 
 const screens = { home: $('#home-screen'), game: $('#game-screen') };
@@ -12,7 +13,11 @@ const pipMap = {
 
 function setMode(mode) {
   state.mode = mode;
-  document.querySelectorAll('.mode-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.mode === mode));
+  document.querySelectorAll('.mode-tab').forEach(tab => {
+    const active = tab.dataset.mode === mode;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
   $('#room-field').classList.toggle('hidden', mode !== 'join');
   $('#room-input').required = mode === 'join';
   $('#entry-submit').innerHTML = mode === 'create' ? 'Create a room <span>→</span>' : 'Join the table <span>→</span>';
@@ -73,15 +78,27 @@ function saveSession() {
 }
 
 function playSound(kind) {
+  if (!state.soundEnabled) return;
   try {
     audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    audioContext.resume?.();
     const now = audioContext.currentTime;
     const notes = {
       roll: [[180, .03, .05], [240, .09, .05], [320, .15, .07]],
       safe: [[440, 0, .08], [620, .08, .1]],
       bust: [[150, 0, .22], [90, .12, .32]],
       bank: [[520, 0, .08], [720, .08, .08], [900, .16, .12]],
-      win: [[523, 0, .18], [659, .18, .18], [784, .36, .3], [659, .72, .16], [784, .9, .16], [1047, 1.08, .48], [784, 1.62, .16], [880, 1.8, .16], [988, 1.98, .2], [1047, 2.22, .7], [523, 2.22, .7], [659, 2.22, .7]]
+      chat: [[720, 0, .05], [900, .07, .08]],
+      win: [
+        [392, 0, .24], [523, 0, .24], [659, 0, .24],
+        [523, .34, .2], [659, .34, .2], [784, .34, .2],
+        [587, .68, .2], [740, .68, .2], [880, .68, .2],
+        [659, 1.02, .36], [784, 1.02, .36], [988, 1.02, .36],
+        [784, 1.52, .16], [880, 1.7, .16], [988, 1.88, .18], [1175, 2.08, .5],
+        [523, 2.7, .25], [659, 2.7, .25], [784, 2.7, .25],
+        [587, 3.05, .25], [740, 3.05, .25], [880, 3.05, .25],
+        [659, 3.42, .95], [784, 3.42, .95], [1047, 3.42, .95]
+      ]
     }[kind] || [];
     for (const [frequency, delay, duration] of notes) {
       const oscillator = audioContext.createOscillator();
@@ -92,17 +109,48 @@ function playSound(kind) {
       gain.gain.exponentialRampToValueAtTime(kind === 'roll' ? .055 : .11, now + delay + .01);
       gain.gain.exponentialRampToValueAtTime(.0001, now + delay + duration);
       oscillator.connect(gain).connect(audioContext.destination);
+      activeAudioNodes.add(oscillator);
+      oscillator.addEventListener('ended', () => activeAudioNodes.delete(oscillator), { once: true });
       oscillator.start(now + delay);
       oscillator.stop(now + delay + duration + .02);
     }
   } catch { /* Sound is an enhancement; the game still works if audio is blocked. */ }
 }
 
+function updateSoundControl() {
+  const button = $('#sound-toggle');
+  button.setAttribute('aria-pressed', String(!state.soundEnabled));
+  button.setAttribute('aria-label', state.soundEnabled ? 'Mute game sounds' : 'Turn on game sounds');
+  button.innerHTML = `${state.soundEnabled ? '🔊' : '🔇'} <span>${state.soundEnabled ? 'Sound' : 'Muted'}</span>`;
+}
+
+function setSoundEnabled(enabled) {
+  state.soundEnabled = enabled;
+  localStorage.setItem('dice-night:sound', enabled ? 'on' : 'off');
+  if (!enabled) {
+    for (const node of activeAudioNodes) {
+      try { node.stop(); } catch { /* A scheduled note may already have stopped. */ }
+    }
+    activeAudioNodes.clear();
+  } else {
+    playSound('safe');
+  }
+  updateSoundControl();
+}
+
+function openWinnerResults() {
+  const dialog = $('#winner-dialog');
+  if (!dialog.open) dialog.showModal();
+  requestAnimationFrame(() => $('#winner-name').focus());
+}
+
 function celebrate(winnerId) {
   const celebrationId = `${state.room?.matchId || 0}:${winnerId}`;
   if (!winnerId || state.celebratedWinner === celebrationId) return;
   state.celebratedWinner = celebrationId;
+  openWinnerResults();
   playSound('win');
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const colors = ['#c7f06a', '#ffd074', '#ff8f79', '#88d9ff', '#f5f0e5'];
   for (let index = 0; index < 70; index += 1) {
     const piece = document.createElement('i');
@@ -146,6 +194,51 @@ function showToast(message) {
   setTimeout(() => toast.classList.remove('show'), 1800);
 }
 
+function leaderboardPlayer(row) {
+  const stats = row.stats || {};
+  const games = Number(row.games ?? row.gamesPlayed ?? row.games_played ?? stats.games ?? 0);
+  const wins = Number(row.wins ?? stats.wins ?? 0);
+  const totalBanked = Number(row.totalBanked ?? row.total_banked_points ?? stats.totalBanked ?? 0);
+  return {
+    displayName: String(row.displayName ?? row.playerName ?? row.player_name ?? row.name ?? 'Mystery player'),
+    level: Math.max(1, Number(row.level ?? 1)),
+    games,
+    wins,
+    totalBanked,
+    bestBank: Number(row.bestBank ?? row.best_bank ?? stats.bestBank ?? 0),
+    achievementCount: Number(row.achievementCount ?? row.achievement_count ?? row.achievements?.length ?? 0),
+    isMe: Boolean(row.isMe)
+  };
+}
+
+function leaderboardMarkup(rows) {
+  if (!rows.length) return '<div class="leaderboard-empty">Complete the first match to claim the table.</div>';
+  const podium = rows.slice(0, 3).map((player, index) => `<article class="podium-card ${player.isMe ? 'is-me' : ''}"><span class="podium-rank">${index + 1}</span><strong>${escapeHtml(player.displayName)}</strong><p>${player.wins} wins · Level ${player.level}</p></article>`).join('');
+  const table = rows.slice(3).map((player, index) => {
+    const winRate = player.games ? Math.round((player.wins / player.games) * 100) : 0;
+    return `<div class="leaderboard-row ${player.isMe ? 'is-me' : ''}"><span class="leaderboard-rank">#${index + 4}</span><span class="leaderboard-player"><strong>${escapeHtml(player.displayName)}</strong><small>Level ${player.level} · ${player.achievementCount} badges</small></span><span class="leaderboard-stat">${player.wins}<small>Wins</small></span><span class="leaderboard-stat">${player.totalBanked}<small>Banked</small></span><span class="leaderboard-stat">${winRate}%<small>Win rate</small></span></div>`;
+  }).join('');
+  return `<div class="leaderboard-podium">${podium}</div>${table ? `<div class="leaderboard-table">${table}</div>` : ''}`;
+}
+
+async function loadLeaderboard() {
+  const box = $('#leaderboard-content');
+  box.innerHTML = '<div class="leaderboard-loading">Reading the record book…</div>';
+  try {
+    const data = await api(`/api/leaderboard?sort=${encodeURIComponent(state.leaderboardSort)}&limit=50`);
+    const rawRows = Array.isArray(data) ? data : data.leaderboard || data.players || [];
+    const rows = rawRows.map(leaderboardPlayer);
+    const valueFor = state.leaderboardSort === 'banked' ? player => player.totalBanked : state.leaderboardSort === 'games' ? player => player.games : player => player.wins;
+    rows.sort((left, right) => valueFor(right) - valueFor(left) || right.wins - left.wins || left.displayName.localeCompare(right.displayName));
+    box.innerHTML = leaderboardMarkup(rows);
+    $('#leaderboard-updated').textContent = `Updated ${new Date(data.updatedAt || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  } catch (error) {
+    box.innerHTML = `<div class="leaderboard-empty leaderboard-error">${escapeHtml(error.message)}<button id="retry-leaderboard" type="button">Try again</button></div>`;
+    $('#leaderboard-updated').textContent = 'The rankings could not load.';
+    $('#retry-leaderboard')?.addEventListener('click', loadLeaderboard);
+  }
+}
+
 async function poll() {
   if (!state.code || !state.playerId || state.acting) return;
   try {
@@ -173,9 +266,24 @@ function playerCard(player, index, room) {
   const winner = room.winnerId === player.id;
   const admin = player.id === room.hostId;
   const displayName = admin ? 'FALCON' : player.name;
-  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${player.ready ? 'ready' : ''}">
-    <div class="player-top"><span class="avatar">${admin ? '♛' : escapeHtml(player.name[0].toUpperCase())}</span><span class="player-name">${escapeHtml(displayName)}</span>${admin ? '<span class="admin-badge">ADMIN</span>' : ''}${player.id === room.meId ? '<span class="you">YOU</span>' : ''}<span class="player-perks" title="${player.frozen ? 'Next turn frozen' : player.shieldAvailable ? 'Safety Net available' : ''}">${player.frozen ? '❄' : player.shieldAvailable ? '◈' : ''}</span></div>
-    <div class="player-score"><strong>${player.score}</strong><span>${room.phase === 'lobby' ? player.ready ? 'READY' : 'WAITING' : 'PTS'}</span></div>
+  const bot = Boolean(player.isBot);
+  const showdown = room.mode?.id === 'showdown';
+  const roundLimit = room.showdown?.turnLimit || 5;
+  const progress = showdown
+    ? Math.max(0, Math.min(100, (Number(player.turnsTaken || 0) / roundLimit) * 100))
+    : Math.max(0, Math.min(100, (player.score / Math.max(1, room.targetScore || room.mode?.targetScore || 100)) * 100));
+  const canRemoveBot = bot && room.phase === 'lobby' && room.meId === room.hostId;
+  const status = room.phase === 'lobby'
+    ? (player.ready ? 'READY' : 'WAITING')
+    : showdown
+      ? `${player.score} points, ${player.turnsTaken || 0} of ${roundLimit} turns complete`
+      : `${player.score} of ${room.targetScore || room.mode?.targetScore || 100} points`;
+  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${bot ? 'bot' : ''} ${player.ready ? 'ready' : ''}" ${active ? 'aria-current="true"' : ''} aria-label="${escapeHtml(displayName)}, ${escapeHtml(status)}${active ? ', current turn' : ''}">
+    <div class="player-top"><span class="avatar">${admin ? '♛' : bot ? '⚙' : escapeHtml(player.name[0].toUpperCase())}</span><span class="player-name">${escapeHtml(displayName)}</span>${admin ? '<span class="admin-badge">ADMIN</span>' : ''}${bot ? `<span class="bot-badge">${escapeHtml((player.botStyle || 'BOT').toUpperCase())}</span>` : ''}${player.id === room.meId ? '<span class="you">YOU</span>' : ''}<span class="player-perks" title="${player.frozen ? 'Next turn frozen' : player.shieldAvailable ? 'Safety Net available' : ''}">${player.frozen ? '❄' : player.shieldAvailable ? '◈' : ''}</span></div>
+    <div class="player-score"><strong>${player.score}</strong><span>${room.phase === 'lobby' ? player.ready ? 'READY' : 'WAITING' : showdown ? `${player.turnsTaken || 0}/${roundLimit} TURNS` : `/ ${room.targetScore || room.mode?.targetScore || 100}`}</span></div>
+    ${room.phase !== 'lobby' ? `<div class="player-progress" aria-hidden="true"><span style="width:${progress}%"></span></div>` : ''}
+    ${active ? '<span class="current-turn">CURRENT TURN</span>' : ''}
+    ${canRemoveBot ? `<button class="bot-card-action" type="button" data-remove-bot="${escapeHtml(player.id)}" aria-label="Remove ${escapeHtml(displayName)}">Remove bot</button>` : ''}
   </article>`;
 }
 
@@ -215,6 +323,7 @@ function render(room, animateRoll = false) {
   $('#game-error').textContent = '';
   renderChat(room);
   renderTimeline(room);
+  renderEventFeed(room);
   renderReactions(room);
 
   const cards = room.players.map((player, index) => playerCard(player, index, room));
@@ -227,6 +336,7 @@ function render(room, animateRoll = false) {
   $('#lobby-panel').classList.toggle('hidden', room.phase !== 'lobby');
   $('#play-panel').classList.toggle('hidden', room.phase !== 'playing');
   $('#winner-panel').classList.toggle('hidden', room.phase !== 'finished');
+  if (room.phase !== 'finished' && $('#winner-dialog').open) $('#winner-dialog').close();
 
   if (room.phase === 'lobby') {
     const count = room.players.length;
@@ -234,7 +344,9 @@ function render(room, animateRoll = false) {
     const host = room.hostId === room.meId;
     const me = room.players.find(player => player.id === room.meId);
     document.querySelectorAll('[data-game-mode]').forEach(button => {
-      button.classList.toggle('active', button.dataset.gameMode === room.mode.id);
+      const active = button.dataset.gameMode === room.mode.id;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
       button.disabled = !host;
     });
     $('#ready-button').classList.toggle('hidden', room.meRole !== 'player');
@@ -246,6 +358,18 @@ function render(room, animateRoll = false) {
     $('#start-button').classList.toggle('hidden', !host);
     $('#start-button').disabled = !room.allReady;
     $('#start-button').textContent = count < 2 ? 'Invite a friend to start' : room.allReady ? `Launch ${room.mode.name}` : 'Waiting for everyone';
+    $('#bot-tools').classList.toggle('hidden', !host);
+    $('#add-bot-button').disabled = count >= room.maxPlayers || state.acting;
+    $('#add-bot-button').textContent = count >= room.maxPlayers ? 'Table full' : '＋ Add practice bot';
+    if (host && Array.isArray(room.botStyles) && room.botStyles.length) {
+      const select = $('#bot-difficulty');
+      const selected = select.value;
+      select.innerHTML = room.botStyles.map(style => `<option value="${escapeHtml(style.id)}">${escapeHtml(style.name)}</option>`).join('');
+      if ([...select.options].some(option => option.value === selected)) select.value = selected;
+      else if ([...select.options].some(option => option.value === 'balanced')) select.value = 'balanced';
+    }
+  } else {
+    $('#bot-tools').classList.add('hidden');
   }
 
   if (room.phase === 'playing') {
@@ -276,6 +400,9 @@ function render(room, animateRoll = false) {
       $('#winner-stats').textContent = '';
       $('#awards').innerHTML = '';
       $('#room-records').innerHTML = '';
+      $('#restart-button').classList.add('hidden');
+      $('#winner-waiting').classList.remove('hidden');
+      openWinnerResults();
       return;
     }
     const winnerName = winner.id === room.hostId ? 'FALCON' : winner.name;
@@ -287,10 +414,23 @@ function render(room, animateRoll = false) {
       const owner = room.players.find(player => player.id === award.playerId);
       return `<article><span>${award.icon}</span><div><b>${escapeHtml(award.title)}</b><strong>${escapeHtml(owner?.id === room.hostId ? 'FALCON' : owner?.name || '')}</strong><small>${escapeHtml(award.value)}</small></div></article>`;
     }).join('');
-    $('#room-records').innerHTML = `<h3>Room records</h3>${[...room.players].sort((a, b) => (b.career?.wins || 0) - (a.career?.wins || 0)).map(player => `<p><b>${escapeHtml(player.id === room.hostId ? 'FALCON' : player.name)}</b><span>${player.career?.wins || 0} wins · ${player.career?.games || 0} games · ${player.career?.totalBanked || 0} banked</span></p>`).join('')}`;
-    $('#restart-button').classList.toggle('hidden', room.hostId !== room.meId);
+    $('#room-records').innerHTML = `<h3>Final standings</h3>${[...room.players].sort((a, b) => b.score - a.score).map((player, index) => `<p><b>#${index + 1} ${escapeHtml(player.id === room.hostId ? 'FALCON' : player.name)}</b><span>${player.score} points · ${player.stats?.rolls || 0} rolls · ${player.stats?.busts || 0} busts</span></p>`).join('')}`;
+    const host = room.hostId === room.meId;
+    $('#restart-button').classList.toggle('hidden', !host);
+    $('#winner-waiting').classList.toggle('hidden', host);
     celebrate(room.winnerId);
   }
+}
+
+function renderEventFeed(room) {
+  const icons = { roll: '🎲', double: '×2', risk_die: '☠', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', player_leave: '−', spectator_join: '◉', lobby: '↻', admin: '♛' };
+  const roomHost = room.players.find(player => player.id === room.hostId);
+  const events = [...(room.events || [])].slice(-3).reverse();
+  $('#event-feed').innerHTML = events.length ? events.map(item => {
+    const text = roomHost?.name ? item.text.split(roomHost.name).join('FALCON') : item.text;
+    const time = new Date(item.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `<li><span class="event-icon" aria-hidden="true">${icons[item.type] || '•'}</span><div><p title="${escapeHtml(text)}">${escapeHtml(text)}</p><time datetime="${new Date(item.at).toISOString()}">${time}</time></div></li>`;
+  }).join('') : '<li class="event-empty">New rolls and table moments will appear here.</li>';
 }
 
 function renderTimeline(room) {
@@ -319,6 +459,9 @@ function renderReactions(room) {
 
 function renderChat(room) {
   const messages = room.chat || [];
+  const newest = messages.at(-1);
+  if (state.lastChatId && newest?.id !== state.lastChatId && newest?.playerId !== room.meId) playSound('chat');
+  state.lastChatId = newest?.id || null;
   const watching = (room.spectators || []).length;
   $('#chat-members').textContent = `${room.players.length} playing${watching ? ` · ${watching} watching` : ''}`;
   const box = $('#chat-messages');
@@ -339,15 +482,31 @@ function renderChat(room) {
   $('#chat-badge').classList.toggle('hidden', state.chatOpen || unread === 0);
 }
 
-function toggleChat(open) {
+function toggleChat(open, restoreFocus = true) {
+  if (open && state.timelineOpen) toggleTimeline(false, false);
   state.chatOpen = open;
   $('#chat-panel').classList.toggle('open', open);
   $('#chat-panel').setAttribute('aria-hidden', String(!open));
+  $('#chat-panel').toggleAttribute('inert', !open);
+  $('#chat-button').setAttribute('aria-expanded', String(open));
   if (open && state.room) {
     state.chatSeen = state.room.chat?.at(-1)?.id || null;
     renderChat(state.room);
     $('#chat-input').focus();
+  } else if (!open && restoreFocus) {
+    $('#chat-button').focus();
   }
+}
+
+function toggleTimeline(open, restoreFocus = true) {
+  if (open && state.chatOpen) toggleChat(false, false);
+  state.timelineOpen = open;
+  $('#timeline-panel').classList.toggle('open', open);
+  $('#timeline-panel').setAttribute('aria-hidden', String(!open));
+  $('#timeline-panel').toggleAttribute('inert', !open);
+  $('#timeline-button').setAttribute('aria-expanded', String(open));
+  if (open) $('#close-timeline').focus();
+  else if (restoreFocus) $('#timeline-button').focus();
 }
 
 function updateTurnTimer() {
@@ -397,7 +556,11 @@ async function doAction(type, targetId) {
 document.querySelectorAll('.mode-tab').forEach(tab => tab.addEventListener('click', () => setMode(tab.dataset.mode)));
 document.querySelectorAll('.role-choice').forEach(button => button.addEventListener('click', () => {
   state.joinRole = button.dataset.role;
-  document.querySelectorAll('.role-choice').forEach(choice => choice.classList.toggle('active', choice === button));
+  document.querySelectorAll('.role-choice').forEach(choice => {
+    const active = choice === button;
+    choice.classList.toggle('active', active);
+    choice.setAttribute('aria-pressed', String(active));
+  });
 }));
 $('#room-input').addEventListener('input', event => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 5); });
 $('#rejoin-input').addEventListener('input', event => { event.target.value = event.target.value.replace(/\D/g, '').slice(0, 6); });
@@ -427,6 +590,7 @@ $('#entry-form').addEventListener('submit', async event => {
 
 $('#start-button').addEventListener('click', () => doAction('start'));
 $('#ready-button').addEventListener('click', () => doAction('ready'));
+$('#add-bot-button').addEventListener('click', () => doAction('add_bot', $('#bot-difficulty').value));
 $('#mode-picker').addEventListener('click', event => {
   const button = event.target.closest('[data-game-mode]');
   if (button) doAction('set_mode', button.dataset.gameMode);
@@ -446,6 +610,12 @@ $('#freeze-targets').addEventListener('click', async event => {
   await doAction('freeze', button.dataset.playerId);
 });
 $('#restart-button').addEventListener('click', () => doAction('restart'));
+$('#view-results-button').addEventListener('click', openWinnerResults);
+$('#close-winner').addEventListener('click', () => $('#winner-dialog').close());
+$('#players').addEventListener('click', event => {
+  const button = event.target.closest('[data-remove-bot]');
+  if (button) doAction('remove_bot', button.dataset.removeBot);
+});
 document.querySelector('.reaction-bar').addEventListener('click', async event => {
   const button = event.target.closest('[data-reaction]');
   if (!button) return;
@@ -486,15 +656,9 @@ $('#session-key').addEventListener('click', async () => {
 $('#chat-button').addEventListener('click', () => toggleChat(true));
 $('#close-chat').addEventListener('click', () => toggleChat(false));
 $('#timeline-button').addEventListener('click', () => {
-  state.timelineOpen = true;
-  $('#timeline-panel').classList.add('open');
-  $('#timeline-panel').setAttribute('aria-hidden', 'false');
+  toggleTimeline(true);
 });
-$('#close-timeline').addEventListener('click', () => {
-  state.timelineOpen = false;
-  $('#timeline-panel').classList.remove('open');
-  $('#timeline-panel').setAttribute('aria-hidden', 'true');
-});
+$('#close-timeline').addEventListener('click', () => toggleTimeline(false));
 $('#chat-form').addEventListener('submit', async event => {
   event.preventDefault();
   const input = $('#chat-input');
@@ -526,8 +690,9 @@ async function inlineAdminApi(url, options = {}) {
 
 function inlineAdminRoom(room) {
   const mainAction = room.phase === 'playing' ? (room.paused ? 'resume' : 'pause') : room.phase === 'finished' ? 'reset' : 'force_start';
-  const players = room.players.map(player => `<div class="inline-room-tools"><b>${escapeHtml(player.name)}</b><span>${player.score} pts</span><button data-score="-5" data-player="${player.id}">-5</button><button data-score="5" data-player="${player.id}">+5</button>${player.id === room.hostId ? '' : `<button class="danger" data-remove="${player.id}">Remove</button>`}</div>`).join('');
-  return `<article class="inline-admin-room" data-admin-room="${room.code}"><header><div><b>${room.code}</b> · ${room.phase}${room.paused ? ' · paused' : ''}</div><span>${room.players.length}/9</span></header>${players}<div class="inline-room-tools"><button data-admin-action="${mainAction}">${mainAction.replace('_', ' ')}</button><select data-admin-timer>${[5,7,10,15,20,30,45,60].map(value => `<option value="${value}" ${room.turnDurationMs === value * 1000 ? 'selected' : ''}>${value} sec</option>`).join('')}</select><button data-admin-action="clear_chat">Clear chat</button><button data-admin-action="reset">Reset</button><button class="danger" data-admin-action="close">Close room</button></div></article>`;
+  const players = room.players.map(player => `<div class="inline-room-tools"><b>${escapeHtml(player.name)}${player.isBot ? ' · BOT' : ''}</b><span>${player.score} pts</span><button data-score="-5" data-player="${player.id}">-5</button><button data-score="5" data-player="${player.id}">+5</button>${player.id === room.hostId ? '' : `<button class="danger" data-remove="${player.id}">Remove</button>`}</div>`).join('');
+  const lobbyTools = room.phase === 'lobby' ? `<select data-inline-mode aria-label="Game type">${['classic','blitz','marathon','showdown'].map(mode => `<option value="${mode}" ${room.mode?.id === mode ? 'selected' : ''}>${mode.replace('showdown', 'five-round showdown')}</option>`).join('')}</select><select data-admin-bot-style aria-label="Practice bot style"><option value="careful">Careful bot</option><option value="balanced" selected>Balanced bot</option><option value="bold">Bold bot</option></select><button data-admin-action="add_bot">Add bot</button>` : '';
+  return `<article class="inline-admin-room" data-admin-room="${room.code}"><header><div><b>${room.code}</b> · ${room.phase}${room.paused ? ' · paused' : ''}</div><span>${room.players.length}/9</span></header>${players}<div class="inline-room-tools"><button data-admin-action="${mainAction}">${mainAction.replace('_', ' ')}</button>${lobbyTools}<select data-admin-timer>${[5,10,15,20,30,45,60].map(value => `<option value="${value}" ${room.turnDurationMs === value * 1000 ? 'selected' : ''}>${value} sec</option>`).join('')}</select><button data-admin-action="clear_chat">Clear chat</button><button data-admin-action="reset">Reset</button><button class="danger" data-admin-action="close">Close room</button></div></article>`;
 }
 
 async function refreshInlineAdmin() {
@@ -570,17 +735,6 @@ $('#inline-admin-lock').addEventListener('click', () => {
   $('#inline-admin-content').classList.add('hidden');
   $('#inline-admin-login').classList.remove('hidden');
 });
-$('#inline-admin-export').addEventListener('click', async () => {
-  try {
-    const response = await fetch('/api/admin/records.csv', { headers: { Authorization: `Bearer ${inlineAdminToken}` } });
-    if (!response.ok) throw new Error('Export is unavailable until PostgreSQL is connected.');
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(await response.blob());
-    link.download = 'dice-night-match-records.csv';
-    link.click();
-    URL.revokeObjectURL(link.href);
-  } catch (error) { showToast(error.message); }
-});
 $('#inline-admin-rooms').addEventListener('click', async event => {
   const room = event.target.closest('[data-admin-room]');
   if (!room) return;
@@ -590,7 +744,8 @@ $('#inline-admin-rooms').addEventListener('click', async event => {
   try {
     if (type) {
       if ((type === 'reset' || type === 'close') && !confirm(`${type} room ${room.dataset.adminRoom}?`)) return;
-      await inlineAdminAction(room.dataset.adminRoom, type);
+      const extra = type === 'add_bot' ? { style: room.querySelector('[data-admin-bot-style]').value } : {};
+      await inlineAdminAction(room.dataset.adminRoom, type, extra);
     } else if (playerId) {
       await inlineAdminAction(room.dataset.adminRoom, 'score', { playerId, delta: Number(event.target.dataset.score) });
     } else if (removeId && confirm('Remove this player?')) {
@@ -599,13 +754,33 @@ $('#inline-admin-rooms').addEventListener('click', async event => {
   } catch (error) { showToast(error.message); }
 });
 $('#inline-admin-rooms').addEventListener('change', event => {
-  if (!event.target.matches('[data-admin-timer]')) return;
   const room = event.target.closest('[data-admin-room]');
-  inlineAdminAction(room.dataset.adminRoom, 'set_timer', { seconds: Number(event.target.value) }).catch(error => showToast(error.message));
+  if (event.target.matches('[data-admin-timer]')) {
+    inlineAdminAction(room.dataset.adminRoom, 'set_timer', { seconds: Number(event.target.value) }).catch(error => showToast(error.message));
+  } else if (event.target.matches('[data-inline-mode]')) {
+    inlineAdminAction(room.dataset.adminRoom, 'set_mode', { mode: event.target.value }).catch(error => showToast(error.message));
+  }
 });
 
 $('#profile-button').addEventListener('click', () => $('#profile-dialog').showModal());
 $('#close-profile').addEventListener('click', () => $('#profile-dialog').close());
+$('#sound-toggle').addEventListener('click', () => setSoundEnabled(!state.soundEnabled));
+$('#leaderboard-button').addEventListener('click', () => {
+  $('#leaderboard-dialog').showModal();
+  loadLeaderboard();
+});
+$('#close-leaderboard').addEventListener('click', () => $('#leaderboard-dialog').close());
+$('#leaderboard-filters').addEventListener('click', event => {
+  const button = event.target.closest('[data-sort], [data-leaderboard-sort]');
+  if (!button) return;
+  state.leaderboardSort = button.dataset.leaderboardSort || button.dataset.sort;
+  document.querySelectorAll('[data-leaderboard-sort]').forEach(option => {
+    const active = option === button;
+    option.classList.toggle('active', active);
+    option.setAttribute('aria-pressed', String(active));
+  });
+  loadLeaderboard();
+});
 for (const id of ['profile-pin', 'login-pin']) {
   $(`#${id}`).addEventListener('input', event => { event.target.value = event.target.value.replace(/\D/g, '').slice(0, 6); });
 }
@@ -647,14 +822,29 @@ $('#updates-dialog').addEventListener('click', event => {
 });
 
 function dismissRoyaleIntro() {
-  $('#royale-intro').classList.add('leaving');
-  try { sessionStorage.setItem('dice-night:intro-v31', 'seen'); } catch { /* Session storage is optional. */ }
+  const intro = $('#royale-intro');
+  intro.classList.add('leaving');
+  setIntroInert(false);
+  $('#name-input').focus();
+  intro.setAttribute('aria-hidden', 'true');
+  try { sessionStorage.setItem('dice-night:intro-v4', 'seen'); } catch { /* Session storage is optional. */ }
   playSound('bank');
 }
 
+function setIntroInert(active) {
+  document.querySelectorAll('body > header, body > main').forEach(element => element.toggleAttribute('inert', active));
+}
+
+let introVisible = true;
 try {
-  if (sessionStorage.getItem('dice-night:intro-v31') === 'seen') $('#royale-intro').classList.add('leaving');
+  if (sessionStorage.getItem('dice-night:intro-v4') === 'seen') {
+    $('#royale-intro').classList.add('leaving');
+    $('#royale-intro').setAttribute('aria-hidden', 'true');
+    introVisible = false;
+  }
 } catch { /* Show the intro when session storage is unavailable. */ }
+setIntroInert(introVisible);
+if (introVisible) requestAnimationFrame(() => $('#enter-royale').focus());
 
 $('#enter-royale').addEventListener('click', dismissRoyaleIntro);
 $('#intro-updates').addEventListener('click', () => {
@@ -662,6 +852,27 @@ $('#intro-updates').addEventListener('click', () => {
   $('#updates-dialog').showModal();
 });
 
+$('#royale-intro').addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    dismissRoyaleIntro();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = [$('#enter-royale'), $('#intro-updates')];
+  const current = focusable.indexOf(document.activeElement);
+  const next = event.shiftKey ? (current <= 0 ? focusable.length - 1 : current - 1) : (current + 1) % focusable.length;
+  event.preventDefault();
+  focusable[next].focus();
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if (state.chatOpen) toggleChat(false);
+  if (state.timelineOpen) toggleTimeline(false);
+});
+
+updateSoundControl();
 loadProfile();
 
 (async function restoreOrPrefill() {

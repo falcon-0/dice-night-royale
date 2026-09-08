@@ -4,22 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#111c18">
-  <title>Dice Night Royale — Major Update</title>
+  <title>Dice Night Royale V4 — Major Update</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=33">
+  <link rel="stylesheet" href="/styles.css?v=40">
 </head>
 <body>
-  <section id="royale-intro" class="royale-intro" aria-label="Dice Night Royale introduction">
+  <section id="royale-intro" class="royale-intro" role="dialog" aria-modal="true" aria-labelledby="intro-title">
     <div class="intro-orbit one"></div><div class="intro-orbit two"></div>
     <div class="intro-die" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
     <div class="intro-content">
-      <p>THE TABLE HAS EVOLVED</p>
+      <p>A NEW NIGHT BEGINS</p>
       <div class="intro-logo">DICE NIGHT <span>ROYALE</span></div>
-      <h1>Welcome to<br><em>version 3.1.</em></h1>
-      <div class="intro-features"><span>Player profiles</span><span>Deadly Risk Die</span><span>Permanent records</span></div>
-      <div class="intro-actions"><button id="enter-royale" class="primary-button">Enter Royale <b>→</b></button><button id="intro-updates" class="text-button">See what’s new</button></div>
+      <h1 id="intro-title">Welcome to<br><em>version 4.</em></h1>
+      <div class="intro-features"><span>Practice bots</span><span>Royale leaderboard</span><span>Live match feed</span></div>
+      <div class="intro-actions"><button id="enter-royale" class="primary-button">Enter Dice Night V4 <b>→</b></button><button id="intro-updates" class="text-button">See what’s new</button></div>
     </div>
     <small class="intro-admin">♛ BUILT FOR FALCON · ADMIN</small>
   </section>
@@ -30,6 +30,8 @@
       <span>DICE NIGHT <b class="royale-mark">ROYALE</b></span>
     </a>
     <div class="top-actions">
+      <button id="sound-toggle" class="text-button sound-toggle" type="button" aria-pressed="false" aria-label="Mute game sounds">🔊 <span>Sound</span></button>
+      <button id="leaderboard-button" class="text-button leaderboard-link" aria-haspopup="dialog">🏆 Leaderboard</button>
       <button id="profile-button" class="text-button">Player profile</button>
       <button id="admin-deck-button" class="text-button falcon-control">Falcon controls</button>
       <button id="updates-button" class="text-button update-link"><span></span> What’s new</button>
@@ -40,15 +42,15 @@
   <main>
     <section id="home-screen" class="screen home-screen">
       <div class="hero-copy">
-        <p class="eyebrow">THE MAJOR UPDATE · VERSION 3.1</p>
+        <p class="eyebrow">THE MAJOR UPDATE · VERSION 4</p>
         <h1>Own the table.<br><em>Risk everything.</em></h1>
-        <p class="intro">Profiles, achievements, two dice choices, permanent records, embedded Falcon controls, and a louder table.</p>
+        <p class="intro">Practice bots, public rankings, a live match feed, richer celebrations, profiles, achievements, and a louder table.</p>
       </div>
 
       <div class="entry-card">
         <div class="mode-tabs" role="tablist">
-          <button class="mode-tab active" data-mode="create" role="tab">Create room</button>
-          <button class="mode-tab" data-mode="join" role="tab">Join / rejoin</button>
+          <button class="mode-tab active" data-mode="create" role="tab" aria-selected="true">Create room</button>
+          <button class="mode-tab" data-mode="join" role="tab" aria-selected="false">Join / rejoin</button>
         </div>
         <div id="profile-strip" class="profile-strip">Playing as a guest. <button id="profile-strip-button" type="button">Save your stats</button></div>
         <form id="entry-form">
@@ -58,8 +60,8 @@
             <label for="room-input">Room code</label>
             <input id="room-input" maxlength="5" autocomplete="off" spellcheck="false" placeholder="ABCDE">
             <div class="role-switch" aria-label="Choose how to join">
-              <button type="button" class="role-choice active" data-role="player">Play</button>
-              <button type="button" class="role-choice" data-role="spectator">Watch</button>
+              <button type="button" class="role-choice active" data-role="player" aria-pressed="true">Play</button>
+              <button type="button" class="role-choice" data-role="spectator" aria-pressed="false">Watch</button>
             </div>
             <label for="rejoin-input">Private rejoin key <small>only if returning</small></label>
             <input id="rejoin-input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digits">
@@ -79,8 +81,8 @@
         </div>
         <div class="room-actions">
           <button id="session-key" class="copy-button" title="Keep this private">🔑 <span>Rejoin key</span></button>
-          <button id="timeline-button" class="copy-button"><span>↯</span> Timeline</button>
-          <button id="chat-button" class="copy-button"><span>◌</span> Chat <b id="chat-badge" class="hidden">0</b></button>
+          <button id="timeline-button" class="copy-button" aria-controls="timeline-panel" aria-expanded="false"><span>↯</span> Timeline</button>
+          <button id="chat-button" class="copy-button" aria-controls="chat-panel" aria-expanded="false"><span>◌</span> Chat <b id="chat-badge" class="hidden">0</b></button>
           <button id="copy-button" class="copy-button"><span>⧉</span> Copy invite</button>
         </div>
       </div>
@@ -90,6 +92,8 @@
         <div><small>LIVE TABLE</small><strong id="status-message">Waiting for players</strong></div>
         <b id="last-action-die">READY</b>
       </div>
+
+      <ol id="event-feed" class="event-feed" aria-label="Latest table actions"></ol>
 
       <div id="players" class="players"></div>
 
@@ -103,9 +107,19 @@
             <div class="invite-code"><span id="invite-code">—</span></div>
             <p class="microcopy">Share this code or copy the invite link</p>
             <div id="mode-picker" class="mode-picker">
-              <button data-game-mode="classic"><b>Classic</b><small>100 pts · 10 sec</small></button>
-              <button data-game-mode="blitz"><b>Blitz</b><small>50 pts · 7 sec</small></button>
-              <button data-game-mode="marathon"><b>Marathon</b><small>200 pts · 15 sec</small></button>
+              <button data-game-mode="classic" aria-pressed="false"><b>Classic</b><small>100 pts · 10 sec</small></button>
+              <button data-game-mode="blitz" aria-pressed="false"><b>Blitz</b><small>50 pts · 10 sec</small></button>
+              <button data-game-mode="marathon" aria-pressed="false"><b>Marathon</b><small>200 pts · 10 sec</small></button>
+              <button data-game-mode="showdown" aria-pressed="false"><b>Five-Round Showdown</b><small>5 turns each · sudden-death ties</small></button>
+            </div>
+            <div id="bot-tools" class="lobby-tools hidden">
+              <button id="add-bot-button" class="secondary-button" type="button">＋ Add practice bot</button>
+              <label for="bot-difficulty">Style</label>
+              <select id="bot-difficulty" aria-label="Practice bot style">
+                <option value="careful">Careful</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="bold">Bold</option>
+              </select>
             </div>
             <p id="ready-note" class="microcopy">Everyone gets ready, then FALCON starts.</p>
             <button id="ready-button" class="secondary-button">I’m ready</button>
@@ -141,12 +155,8 @@
           <div id="winner-panel" class="center-panel hidden">
             <p class="eyebrow">WE HAVE A WINNER</p>
             <div class="trophy">✦</div>
-            <h2 id="winner-name">Winner!</h2>
-            <p id="winner-score" class="subtle"></p>
-            <p id="winner-stats" class="winner-stats"></p>
-            <div id="awards" class="awards"></div>
-            <div id="room-records" class="room-records"></div>
-            <button id="restart-button" class="primary-button">Play again</button>
+            <h2>The crown has been claimed.</h2>
+            <button id="view-results-button" class="primary-button">View results</button>
           </div>
         </div>
       </div>
@@ -156,7 +166,7 @@
     </section>
   </main>
 
-  <aside id="chat-panel" class="chat-panel" aria-label="Room chat" aria-hidden="true">
+  <aside id="chat-panel" class="chat-panel" aria-label="Room chat" aria-hidden="true" inert>
     <div class="chat-head">
       <div><span class="live-dot"></span><strong>Room chat</strong><small id="chat-members">0 players</small></div>
       <button id="close-chat" aria-label="Close chat">×</button>
@@ -169,7 +179,7 @@
     <p id="chat-error" class="chat-error"></p>
   </aside>
 
-  <aside id="timeline-panel" class="chat-panel timeline-panel" aria-label="Match timeline" aria-hidden="true">
+  <aside id="timeline-panel" class="chat-panel timeline-panel" aria-label="Match timeline" aria-hidden="true" inert>
     <div class="chat-head">
       <div><span class="live-dot"></span><strong>Match timeline</strong><small>Every big moment</small></div>
       <button id="close-timeline" aria-label="Close timeline">×</button>
@@ -187,7 +197,7 @@
       <article><span>💰</span><div><strong>3. Tap “Bank points”</strong><p>This saves the pot into your big score. Saved points are yours.</p></div></article>
       <article><span>☝️</span><div><strong>4. Be careful with 1</strong><p>Roll a 1 and the pot goes away. You also lose 5 saved points.</p></div></article>
       <article><span>⏰</span><div><strong>5. Tap before time runs out</strong><p>Use the timer on screen. If it reaches zero, your turn ends.</p></div></article>
-      <article><span>🏆</span><div><strong>6. Reach the target</strong><p>Blitz needs 50, Classic needs 100, and Marathon needs 200. First there wins!</p></div></article>
+      <article><span>🏆</span><div><strong>6. Win your game type</strong><p>Reach 50 in Blitz, 100 in Classic, or 200 in Marathon. In Showdown, the highest score after five turns each wins.</p></div></article>
     </div>
     <details class="extra-rules">
       <summary>Show me the extra tricks</summary>
@@ -202,23 +212,24 @@
 
   <dialog id="updates-dialog" class="updates-dialog">
     <button id="close-updates" class="dialog-close" aria-label="Close">×</button>
-    <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 3.1.0</p>
-    <h2>Your name means something now.</h2>
+    <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 4.0</p>
+    <h2>The table feels alive now.</h2>
     <div class="update-list">
-      <article><span>01</span><div><strong>Permanent profiles</strong><p>Create an optional profile with a code and PIN, then carry your identity across rooms.</p></div></article>
-      <article><span>02</span><div><strong>XP and levels</strong><p>Matches, rolls, points, and victories grow your permanent player level.</p></div></article>
-      <article><span>03</span><div><strong>Nine achievements</strong><p>Unlock badges for winning, banking, rolling, freezing, and surviving busts.</p></div></article>
-      <article><span>04</span><div><strong>Deadly Risk Die</strong><p>Five reward faces fight five skulls. Longer streaks add even more skulls.</p></div></article>
-      <article><span>05</span><div><strong>PostgreSQL records</strong><p>Hosted rooms and completed matches survive restarts safely.</p></div></article>
-      <article><span>06</span><div><strong>Access reporting</strong><p>Falcon can export records or connect Microsoft Access through safe read-only views.</p></div></article>
-      <article><span>07</span><div><strong>Controls on the main page</strong><p>Falcon manages live rooms without leaving the game website.</p></div></article>
-      <article><span>08</span><div><strong>Guests still welcome</strong><p>No profile is required. Friends can still enter quickly and use private rejoin keys.</p></div></article>
+      <article><span>01</span><div><strong>Five-Round Showdown</strong><p>Everyone gets five turns. The highest score wins, and only tied leaders enter sudden death.</p></div></article>
+      <article><span>02</span><div><strong>Practice bots</strong><p>FALCON can fill open seats with Careful, Balanced, or Bold rivals for instant testing.</p></div></article>
+      <article><span>03</span><div><strong>Royale leaderboard</strong><p>Everyone can see the table’s top players, wins, levels, and banked points.</p></div></article>
+      <article><span>04</span><div><strong>Live match feed</strong><p>The newest rolls, banks, busts, freezes, and wins now stay visible above the players.</p></div></article>
+      <article><span>05</span><div><strong>Champion takeover</strong><p>Every win gets a full results screen, original victory music, awards, and final standings.</p></div></article>
+      <article><span>06</span><div><strong>Better sound control</strong><p>Mute or restore table sounds at any time. Your choice stays saved on this device.</p></div></article>
+      <article><span>07</span><div><strong>Local record book</strong><p>Profiles, achievements, match history, and rankings stay saved with the game.</p></div></article>
+      <article><span>08</span><div><strong>Stronger Falcon controls</strong><p>Manage live rooms and bot-filled test matches without leaving the main website.</p></div></article>
+      <article><span>09</span><div><strong>Made for every screen</strong><p>Player cards, chat, results, and controls are clearer on phones and keyboards.</p></div></article>
     </div>
   </dialog>
 
   <dialog id="profile-dialog" class="profile-dialog">
     <button id="close-profile" class="dialog-close" aria-label="Close">×</button>
-    <p class="eyebrow">PLAYER PROFILE · V3.1</p>
+    <p class="eyebrow">PLAYER PROFILE · V4</p>
     <h2>Keep your glory.</h2>
     <p class="subtle">Profiles are optional. Guests can always play.</p>
     <div id="profile-signed-out">
@@ -255,7 +266,7 @@
     <p id="inline-admin-error" class="error"></p>
     <div id="inline-admin-content" class="hidden">
       <div class="inline-admin-stats"><span><b id="inline-room-total">0</b> rooms</span><span><b id="inline-player-total">0</b> players</span><span><b id="inline-match-total">0</b> saved matches</span></div>
-      <div class="inline-admin-actions"><button id="inline-admin-refresh">Refresh</button><button id="inline-admin-export">Export for Access</button><button id="inline-admin-lock">Lock</button></div>
+      <div class="inline-admin-actions"><button id="inline-admin-refresh">Refresh</button><button id="inline-admin-lock">Lock</button></div>
       <div id="inline-admin-rooms" class="inline-admin-rooms"></div>
     </div>
   </dialog>
@@ -268,7 +279,34 @@
     <div id="freeze-targets" class="freeze-targets"></div>
   </dialog>
 
+  <dialog id="leaderboard-dialog" class="leaderboard-dialog" aria-labelledby="leaderboard-title">
+    <button id="close-leaderboard" class="dialog-close" aria-label="Close leaderboard">×</button>
+    <p class="eyebrow">THE ROYALE RECORD BOOK</p>
+    <div class="leaderboard-heading">
+      <div><h2 id="leaderboard-title">Leaderboard</h2><p id="leaderboard-updated" class="subtle">Loading the champions…</p></div>
+      <div id="leaderboard-filters" class="leaderboard-filters" role="group" aria-label="Sort leaderboard">
+        <button class="active" data-leaderboard-sort="wins" aria-pressed="true">Wins</button>
+        <button data-leaderboard-sort="banked" aria-pressed="false">Banked</button>
+        <button data-leaderboard-sort="games" aria-pressed="false">Games</button>
+      </div>
+    </div>
+    <div id="leaderboard-content" class="leaderboard-content" aria-live="polite"><div class="leaderboard-loading">Reading the record book…</div></div>
+  </dialog>
+
+  <dialog id="winner-dialog" class="winner-dialog" aria-labelledby="winner-name">
+    <button id="close-winner" class="dialog-close" aria-label="Close results">×</button>
+    <p class="eyebrow">WE HAVE A CHAMPION</p>
+    <div class="winner-crown" aria-hidden="true">♛</div>
+    <h2 id="winner-name" tabindex="-1">Winner!</h2>
+    <p id="winner-score" class="winner-score"></p>
+    <p id="winner-stats" class="winner-stats"></p>
+    <div id="awards" class="awards"></div>
+    <div id="room-records" class="room-records"></div>
+    <button id="restart-button" class="primary-button">Play again</button>
+    <p id="winner-waiting" class="subtle hidden">Waiting for FALCON to start the next match.</p>
+  </dialog>
+
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=33"></script>
+  <script src="/app.js?v=40"></script>
 </body>
 </html>

@@ -6,11 +6,18 @@ const path = require('node:path');
 const testDataFile = path.join(os.tmpdir(), `dice-night-test-${process.pid}.json`);
 const testRetiredFile = path.join(os.tmpdir(), `dice-night-retired-test-${process.pid}.json`);
 const testProfileFile = path.join(os.tmpdir(), `dice-night-profiles-test-${process.pid}.json`);
+const testRecordsFile = path.join(os.tmpdir(), `dice-night-records-test-${process.pid}.json`);
 process.env.DATA_FILE = testDataFile;
 process.env.RETIRED_FILE = testRetiredFile;
 process.env.PROFILE_FILE = testProfileFile;
+process.env.RECORDS_FILE = testRecordsFile;
 process.env.ADMIN_TOKEN = 'test-admin-key';
-const { server, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor, riskDieOutcome, applySafeRoll, addChatMessage, addReaction, addSpectator, expireTurnIfNeeded } = require('../server');
+const {
+  server, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor,
+  riskDieOutcome, applySafeRoll, addChatMessage, addReaction, addSpectator,
+  expireTurnIfNeeded, processBotTurn, reconcileWinner, MODES, APP_VERSION
+} = require('../server');
+const { readJsonFile, writeJsonFile } = require('../json-store');
 let baseUrl;
 
 test.before(async () => {
@@ -22,16 +29,17 @@ test.after(() => {
   fs.rmSync(testDataFile, { force: true });
   fs.rmSync(testRetiredFile, { force: true });
   fs.rmSync(testProfileFile, { force: true });
+  fs.rmSync(testRecordsFile, { force: true });
 });
 
 test.after(async () => {
   await new Promise(resolve => server.close(resolve));
 });
 
-async function request(pathname, body, method = 'POST') {
+async function request(pathname, body, method = 'POST', headers = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined
   });
   return { status: response.status, data: await response.json() };
@@ -44,6 +52,16 @@ test('creates a private lobby with one host', () => {
   assert.equal(state.players.length, 1);
   assert.equal(state.hostId, player.id);
   assert.equal(state.targetScore, 100);
+  rooms.delete(room.code);
+});
+
+test('room state never exposes private profile identifiers', () => {
+  const { room, player } = createRoom('Ada');
+  player.profile = { id: 'private-id', profileCode: 'SECRET88', level: 4, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] };
+  const profile = publicState(room, player.id).players[0].profile;
+  assert.deepEqual(profile, { level: 4, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] });
+  assert.equal('id' in profile, false);
+  assert.equal('profileCode' in profile, false);
   rooms.delete(room.code);
 });
 
@@ -126,11 +144,30 @@ test('optional profiles can be created, signed into, and authenticated', async (
   assert.equal(rejected.status, 401);
   const login = await request('/api/profiles/login', { code: created.data.profile.profileCode, pin: '246810' });
   assert.equal(login.status, 200);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const repeated = await request('/api/profiles/login', { code: created.data.profile.profileCode, pin: '246810' });
+    assert.equal(repeated.status, 200);
+  }
 
   const response = await fetch(`${baseUrl}/api/profiles/me`, { headers: { Authorization: `Bearer ${login.data.profileToken}` } });
   assert.equal(response.status, 200);
   const authenticated = await response.json();
   assert.equal(authenticated.profile.displayName, 'Nova');
+});
+
+test('equivalent profile-code formatting shares one failed-login limit', async () => {
+  const created = await request('/api/profiles', { displayName: 'Throttle Test', pin: '246810' });
+  const code = created.data.profile.profileCode;
+  const variants = [
+    `-${code}`, `${code}-`, `${code.slice(0, 2)}-${code.slice(2)}`, `${code.slice(0, 3)} ${code.slice(3)}`,
+    `.${code}`, `${code}!`, `${code.slice(0, 4)}/${code.slice(4)}`, `(${code})`
+  ];
+  for (const variant of variants) {
+    const rejected = await request('/api/profiles/login', { code: variant, pin: '111111' });
+    assert.equal(rejected.status, 401);
+  }
+  const limited = await request('/api/profiles/login', { code, pin: '111111' });
+  assert.equal(limited.status, 429);
 });
 
 test('an expired 10-second clock loses the pot and passes the turn', () => {
@@ -185,6 +222,8 @@ test('freeze costs 5 points and skips the target next turn', () => {
   expireTurnIfNeeded(room);
   assert.equal(room.turnIndex, 0);
   assert.equal(second.frozen, false);
+  assert.equal(player.turnsTaken, 1);
+  assert.equal(second.turnsTaken, 1);
   rooms.delete(room.code);
 });
 
@@ -221,7 +260,7 @@ test('mode selection resets readiness and changes the target and timer', () => {
   room.players.push({ id: 'second', name: 'Lin', score: 0, ready: true, joinedAt: Date.now() });
   action(room, player.id, 'set_mode', 'blitz');
   assert.equal(room.mode, 'blitz');
-  assert.equal(room.turnDurationMs, 7000);
+  assert.equal(room.turnDurationMs, 10000);
   assert.equal(publicState(room, player.id).targetScore, 50);
   assert.equal(room.players.every(candidate => candidate.ready === false), true);
   rooms.delete(room.code);
@@ -256,6 +295,35 @@ test('admin removal safely resets an abandoned match or missing winner', () => {
   adminAction(room, 'remove_player', { playerId: third.id });
   assert.equal(room.phase, 'lobby');
   assert.equal(room.winnerId, null);
+  rooms.delete(room.code);
+});
+
+test('admin removal preserves an active participant snapshot for final records', () => {
+  const { room } = createRoom('Falcon');
+  const removed = { id: 'second', name: 'Lin', score: 22, ready: true, profileId: 'profile-lin', stats: { rolls: 7, busts: 1, bestBank: 12 }, matchBanked: 22, matchFreezes: 1, joinedAt: Date.now() };
+  room.players.push(removed, { id: 'third', name: 'Mira', score: 10, ready: true, stats: { rolls: 2, busts: 0, bestBank: 10 }, joinedAt: Date.now() });
+  room.phase = 'playing';
+  adminAction(room, 'remove_player', { playerId: removed.id });
+  assert.equal(room.phase, 'playing');
+  assert.equal(room.departedPlayers.length, 1);
+  assert.equal(room.departedPlayers[0].profileId, 'profile-lin');
+  assert.equal(room.departedPlayers[0].stats.rolls, 7);
+  rooms.delete(room.code);
+});
+
+test('removing a Showdown contender crowns the only tied leader left', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'careful');
+  action(room, player.id, 'add_bot', 'bold');
+  const contender = room.players[1];
+  room.phase = 'playing';
+  room.mode = 'showdown';
+  room.matchId = 2;
+  room.showdownSuddenDeath = true;
+  room.showdownContenders = [player.id, contender.id];
+  adminAction(room, 'remove_player', { playerId: contender.id });
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
   rooms.delete(room.code);
 });
 
@@ -295,9 +363,11 @@ test('HTTP sessions protect identities, rotate on keyed rejoin, and promote spec
   const rejoined = await request(`/api/rooms/${code}/join`, { name: 'Nova', role: 'player', rejoinCode: guest.data.rejoinCode });
   assert.equal(rejoined.status, 200);
   assert.notEqual(rejoined.data.sessionToken, guest.data.sessionToken);
-  const oldSession = await request(`/api/rooms/${code}?playerId=${guest.data.playerId}&sessionToken=${guest.data.sessionToken}`, null, 'GET');
+  const oldSession = await request(`/api/rooms/${code}?playerId=${guest.data.playerId}`, null, 'GET', { Authorization: `Bearer ${guest.data.sessionToken}` });
   assert.equal(oldSession.status, 401);
-  const currentSession = await request(`/api/rooms/${code}?playerId=${rejoined.data.playerId}&sessionToken=${rejoined.data.sessionToken}`, null, 'GET');
+  const queryCredential = await request(`/api/rooms/${code}?playerId=${rejoined.data.playerId}&sessionToken=${rejoined.data.sessionToken}`, null, 'GET');
+  assert.equal(queryCredential.status, 401);
+  const currentSession = await request(`/api/rooms/${code}?playerId=${rejoined.data.playerId}`, null, 'GET', { Authorization: `Bearer ${rejoined.data.sessionToken}` });
   assert.equal(currentSession.status, 200);
 
   const watcher = await request(`/api/rooms/${code}/join`, { name: 'Orbit', role: 'spectator' });
@@ -311,4 +381,186 @@ test('HTTP sessions protect identities, rotate on keyed rejoin, and promote spec
 test('private admin HTTP routes stay hidden unless explicitly enabled', async () => {
   const response = await request('/api/admin/rooms', null, 'GET');
   assert.equal(response.status, 404);
+});
+
+test('health identifies the V4 JSON server', async () => {
+  const response = await request('/api/health', null, 'GET');
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.data, { ok: true, rooms: rooms.size, storage: 'json', version: APP_VERSION });
+  assert.equal(APP_VERSION, '4.0.0');
+});
+
+test('every built-in game mode starts with a 10-second turn', () => {
+  assert.deepEqual(Object.values(MODES).map(mode => mode.turnMs), [10000, 10000, 10000, 10000]);
+});
+
+test('public leaderboard ranks profiles without exposing identity secrets', async () => {
+  const created = await request('/api/profiles', { displayName: 'Public Hero', pin: '135790' });
+  assert.equal(created.status, 201);
+  const response = await request('/api/leaderboard?limit=50', null, 'GET');
+  assert.equal(response.status, 200);
+  const entry = response.data.leaderboard.find(player => player.displayName === 'Public Hero');
+  assert.ok(entry);
+  assert.deepEqual(Object.keys(entry).sort(), [
+    'achievementCount', 'bestBank', 'displayName', 'games', 'level', 'rank',
+    'totalBanked', 'winRate', 'wins', 'xp'
+  ]);
+  const serialized = JSON.stringify(response.data);
+  for (const privateField of ['profileCode', 'pinHash', 'pinSalt', 'tokenHash', 'lastSeenAt', 'id']) {
+    assert.equal(serialized.includes(`"${privateField}"`), false);
+  }
+});
+
+test('host can add and remove auto-ready practice players', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'bold');
+  const bot = room.players[1];
+  assert.equal(bot.isBot, true);
+  assert.equal(bot.botStyle, 'bold');
+  assert.equal(bot.ready, true);
+  assert.equal(publicState(room, player.id).players[1].isBot, true);
+  assert.equal(publicState(room, player.id).allReady, true);
+  assert.throws(() => action(room, bot.id, 'add_bot', 'bold'), /Only the host/);
+  action(room, player.id, 'remove_bot', bot.id);
+  assert.equal(room.players.length, 1);
+  rooms.delete(room.code);
+});
+
+test('practice player schedules a human-like turn and acts through normal rules', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'balanced');
+  const bot = room.players[1];
+  room.phase = 'playing';
+  room.matchId = 1;
+  room.turnNumber = 1;
+  room.turnIndex = 1;
+  room.turnDeadline = Date.now() + 100000;
+  assert.equal(processBotTurn(room, 1000, () => 0.5), false);
+  assert.equal(processBotTurn(room, 3000, () => 0.5), true);
+  assert.equal(bot.stats.rolls, 1);
+  rooms.delete(room.code);
+});
+
+test('Five-Round Showdown finishes only after every player completes five turns', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'balanced');
+  const second = room.players[1];
+  room.mode = 'showdown';
+  room.phase = 'playing';
+  room.matchId = 1;
+  room.turnIndex = 0;
+  room.turnDeadline = Date.now() + 100000;
+  player.turnsTaken = 4;
+  second.turnsTaken = 4;
+  player.score = 10;
+  second.score = 5;
+  room.turnScore = 1;
+  action(room, player.id, 'hold');
+  assert.equal(room.phase, 'playing');
+  assert.equal(player.turnsTaken, 5);
+  room.turnScore = 1;
+  action(room, second.id, 'hold');
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
+  assert.equal(publicState(room, player.id).targetScore, null);
+  rooms.delete(room.code);
+});
+
+test('tied Showdown plays complete sudden-death rounds until a winner emerges', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'careful');
+  const second = room.players[1];
+  room.mode = 'showdown';
+  room.phase = 'playing';
+  room.matchId = 1;
+  room.turnIndex = 0;
+  room.turnDeadline = Date.now() + 100000;
+  player.turnsTaken = 4;
+  second.turnsTaken = 4;
+  player.score = 9;
+  second.score = 9;
+  room.turnScore = 1;
+  action(room, player.id, 'hold');
+  room.turnScore = 1;
+  action(room, second.id, 'hold');
+  assert.equal(room.phase, 'playing');
+  assert.equal(room.showdownSuddenDeath, true);
+  assert.equal(room.showdownRoundLimit, 6);
+  assert.deepEqual(room.players.map(candidate => candidate.turnsTaken), [5, 5]);
+
+  room.turnScore = 2;
+  action(room, player.id, 'hold');
+  assert.equal(room.phase, 'playing');
+  room.turnScore = 1;
+  action(room, second.id, 'hold');
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
+  assert.deepEqual(room.players.map(candidate => candidate.turnsTaken), [6, 6]);
+  rooms.delete(room.code);
+});
+
+test('Showdown sudden death excludes players who were not tied for the lead', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'careful');
+  action(room, player.id, 'add_bot', 'bold');
+  const second = room.players[1];
+  const third = room.players[2];
+  room.mode = 'showdown';
+  room.phase = 'playing';
+  room.matchId = 1;
+  room.turnIndex = 0;
+  room.turnDeadline = Date.now() + 100000;
+  for (const candidate of room.players) candidate.turnsTaken = 4;
+  player.score = 10;
+  second.score = 10;
+  third.score = 1;
+
+  for (const candidate of [player, second, third]) {
+    room.turnScore = 1;
+    action(room, candidate.id, 'hold');
+  }
+  assert.equal(room.showdownSuddenDeath, true);
+  assert.deepEqual(room.showdownContenders, [player.id, second.id]);
+  assert.equal(room.turnIndex, 0);
+
+  room.turnScore = 2;
+  action(room, player.id, 'hold');
+  room.turnScore = 1;
+  action(room, second.id, 'hold');
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
+  assert.equal(third.turnsTaken, 5);
+  rooms.delete(room.code);
+});
+
+test('atomic JSON storage recovers from a corrupted primary file', () => {
+  const file = path.join(os.tmpdir(), `dice-night-atomic-${process.pid}-${Date.now()}.json`);
+  try {
+    writeJsonFile(file, { generation: 1 });
+    writeJsonFile(file, { generation: 2 });
+    fs.writeFileSync(file, '{broken');
+    assert.deepEqual(readJsonFile(file, null), { generation: 1 });
+    writeJsonFile(file, { generation: 3 });
+    fs.writeFileSync(file, '{broken-again');
+    assert.deepEqual(readJsonFile(file, null), { generation: 1 });
+  } finally {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(`${file}.bak`, { force: true });
+  }
+});
+
+test('winner reconciliation repairs an over-target room exactly once', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'balanced');
+  room.mode = 'marathon';
+  room.phase = 'playing';
+  room.matchId = 3;
+  player.score = 269;
+  assert.equal(reconcileWinner(room), true);
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
+  assert.equal(player.career.wins, 1);
+  assert.equal(reconcileWinner(room), false);
+  assert.equal(player.career.wins, 1);
+  rooms.delete(room.code);
 });

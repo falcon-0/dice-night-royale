@@ -2,18 +2,23 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { createPostgresStore } = require('./database');
-const { ProfileService } = require('./profiles');
+
+const { LocalRecordStore } = require('./records');
+const { ProfileService, normalizeCode } = require('./profiles');
+const { BOT_STYLES, availableBotName, botStyle, chooseBotAction } = require('./bots');
+const { readJsonFile, writeJsonFile } = require('./json-store');
 
 const PORT = Number(process.env.PORT) || 4173;
 const HOST = process.env.HOST || '0.0.0.0';
+const APP_VERSION = '4.0.0';
 const MAX_PLAYERS = 9;
 const TURN_MS = 10_000;
 const MAX_SPECTATORS = 20;
 const MODES = Object.freeze({
   classic: { id: 'classic', name: 'Classic', targetScore: 100, turnMs: 10_000, riskStart: 16, riskStep: 8, description: 'The balanced original' },
-  blitz: { id: 'blitz', name: 'Blitz', targetScore: 50, turnMs: 7_000, riskStart: 20, riskStep: 10, description: 'Fast, loud, and dangerous' },
-  marathon: { id: 'marathon', name: 'Marathon', targetScore: 200, turnMs: 15_000, riskStart: 12, riskStep: 6, description: 'Long game, deeper strategy' }
+  blitz: { id: 'blitz', name: 'Blitz', targetScore: 50, turnMs: 10_000, riskStart: 20, riskStep: 10, description: 'Fast, loud, and dangerous' },
+  marathon: { id: 'marathon', name: 'Marathon', targetScore: 200, turnMs: 10_000, riskStart: 12, riskStep: 6, description: 'Long game, deeper strategy' },
+  showdown: { id: 'showdown', name: 'Five-Round Showdown', targetScore: null, turnMs: 10_000, riskStart: 16, riskStep: 8, description: 'Five turns each, then sudden death if tied' }
 });
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'rooms.json');
 const RETIRED_FILE = process.env.RETIRED_FILE || path.join(__dirname, 'data', 'retired-rooms.json');
@@ -22,9 +27,10 @@ const ADMIN_ENABLED = process.env.ENABLE_ADMIN === '1';
 const rooms = new Map();
 const retiredRooms = new Set();
 const publicDir = path.join(__dirname, 'public');
-const database = createPostgresStore();
-const profiles = new ProfileService(database);
+const recordsStore = new LocalRecordStore();
+const profiles = new ProfileService();
 const authAttempts = new Map();
+const botPlans = new Map();
 
 function loadAdminToken() {
   if (process.env.ADMIN_TOKEN) return process.env.ADMIN_TOKEN;
@@ -42,29 +48,11 @@ function loadAdminToken() {
 const ADMIN_TOKEN = ADMIN_ENABLED ? loadAdminToken() : '';
 
 function persistRooms() {
-  if (database.enabled) {
-    database.queueSnapshot([...rooms.values()], [...retiredRooms]).catch(error => {
-      console.error('Could not save rooms to PostgreSQL:', error.message);
-    });
-    return;
-  }
-  try {
-    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-    fs.writeFileSync(DATA_FILE, JSON.stringify([...rooms.values()], null, 2));
-  } catch (error) {
-    console.error('Could not save rooms:', error.message);
-  }
+  writeJsonFile(DATA_FILE, [...rooms.values()]);
 }
 
 function persistRetiredRooms() {
-  if (database.enabled) {
-    database.queueSnapshot([...rooms.values()], [...retiredRooms]).catch(error => {
-      console.error('Could not save retired rooms to PostgreSQL:', error.message);
-    });
-    return;
-  }
-  fs.mkdirSync(path.dirname(RETIRED_FILE), { recursive: true });
-  fs.writeFileSync(RETIRED_FILE, JSON.stringify([...retiredRooms], null, 2));
+  writeJsonFile(RETIRED_FILE, [...retiredRooms]);
 }
 
 function loadSavedRooms(saved) {
@@ -76,13 +64,18 @@ function loadSavedRooms(saved) {
         room.lastRollKind ??= 'normal';
         room.lastReward ??= null;
         room.freezeUsed ??= false;
-        room.schemaVersion = 3;
+        room.schemaVersion = 4;
         room.matchId ??= 0;
         room.matchStartedAt ??= null;
         room.matchArchived ??= room.phase !== 'finished';
         room.paused ??= false;
         room.turnDurationMs ??= TURN_MS;
         room.mode = MODES[room.mode] ? room.mode : 'classic';
+        room.turnNumber ??= 0;
+        room.showdownRoundLimit ??= 5;
+        room.showdownSuddenDeath ??= false;
+        room.showdownContenders = Array.isArray(room.showdownContenders) ? room.showdownContenders : [];
+        room.departedPlayers = Array.isArray(room.departedPlayers) ? room.departedPlayers : [];
         room.spectators ??= [];
         room.reactions ??= [];
         room.events ??= [];
@@ -95,6 +88,12 @@ function loadSavedRooms(saved) {
           player.career ??= { games: 0, wins: 0, totalBanked: 0 };
           player.matchBanked ??= 0;
           player.matchFreezes ??= 0;
+          player.turnsTaken ??= 0;
+          player.isBot = Boolean(player.isBot);
+          if (player.isBot) {
+            player.botStyle = botStyle(player.botStyle).id;
+            player.ready = true;
+          }
           player.sessionToken ??= crypto.randomBytes(24).toString('base64url');
           player.rejoinCode ??= String(crypto.randomInt(100000, 1000000));
         });
@@ -109,39 +108,33 @@ function loadSavedRooms(saved) {
 }
 
 function loadRooms() {
-  try {
-    loadSavedRooms(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
-  } catch (error) {
-    if (error.code !== 'ENOENT') console.error('Could not load saved rooms:', error.message);
-  }
+  loadSavedRooms(readJsonFile(DATA_FILE, []));
 }
 
 function loadRetiredRooms() {
-  try {
-    for (const code of JSON.parse(fs.readFileSync(RETIRED_FILE, 'utf8'))) retiredRooms.add(String(code).toUpperCase());
-  } catch (error) {
-    if (error.code !== 'ENOENT') console.error('Could not load retired rooms:', error.message);
-  }
+  for (const code of readJsonFile(RETIRED_FILE, [])) retiredRooms.add(String(code).toUpperCase());
 }
 
-if (!database.enabled) {
-  loadRooms();
-  loadRetiredRooms();
-}
+loadRooms();
+loadRetiredRooms();
 
 async function initializeStorage() {
-  if (database.enabled) {
-    const saved = await database.initialize();
-    loadSavedRooms(saved.rooms);
-    for (const code of saved.retiredRooms) retiredRooms.add(String(code).toUpperCase());
-    console.log(`PostgreSQL connected: restored ${rooms.size} active room${rooms.size === 1 ? '' : 's'}`);
-  }
+  await recordsStore.initialize();
   await profiles.initialize();
+  let reconciled = false;
   for (const room of rooms.values()) {
+    const before = JSON.stringify({ phase: room.phase, winnerId: room.winnerId, showdownRoundLimit: room.showdownRoundLimit, showdownSuddenDeath: room.showdownSuddenDeath, showdownContenders: room.showdownContenders, eventCount: room.events?.length || 0 });
+    const finished = reconcileWinner(room);
+    const after = JSON.stringify({ phase: room.phase, winnerId: room.winnerId, showdownRoundLimit: room.showdownRoundLimit, showdownSuddenDeath: room.showdownSuddenDeath, showdownContenders: room.showdownContenders, eventCount: room.events?.length || 0 });
+    if (finished || before !== after) {
+      bump(room);
+      reconciled = true;
+    }
     if (room.phase === 'finished' && !room.matchArchived) {
-      archiveCompletedMatch(room).catch(error => console.error('Could not reconcile completed match:', error.message));
+      await archiveCompletedMatch(room).catch(error => console.error('Could not reconcile completed match:', error.message));
     }
   }
+  if (reconciled) persistRooms();
 }
 
 function roomCode() {
@@ -167,8 +160,9 @@ function modeFor(room) {
 
 async function archiveCompletedMatch(room) {
   if (room.phase !== 'finished' || room.matchArchived) return;
-  const completed = JSON.parse(JSON.stringify({ ...room, targetScore: modeFor(room).targetScore }));
-  await database.recordMatch(completed);
+  const departed = (room.departedPlayers || []).filter(player => !room.players.some(current => current.id === player.id));
+  const completed = JSON.parse(JSON.stringify({ ...room, players: [...room.players, ...departed], targetScore: modeFor(room).targetScore }));
+  await recordsStore.recordMatch(completed);
   await profiles.completeMatch(completed);
   const liveRoom = rooms.get(completed.code);
   if (!liveRoom || liveRoom.matchId !== completed.matchId || liveRoom.phase !== 'finished') return;
@@ -194,11 +188,57 @@ function addEvent(room, type, text, details = {}) {
 function profileSummary(profile) {
   if (!profile) return null;
   return {
-    id: profile.id,
-    profileCode: profile.profileCode,
     level: profile.level,
     achievements: (profile.achievements || []).slice(-3).map(item => ({ key: item.key, name: item.name, icon: item.icon }))
   };
+}
+
+function finishMatch(room, player, banked = 0) {
+  if (room.phase !== 'playing' || room.winnerId) return false;
+  room.phase = 'finished';
+  room.winnerId = player.id;
+  room.matchArchived = false;
+  room.turnScore = 0;
+  room.turnDeadline = null;
+  room.message = `${player.name} wins with ${player.score} points!`;
+  room.players.forEach(candidate => {
+    candidate.career ??= { games: 0, wins: 0, totalBanked: 0 };
+    candidate.career.games += 1;
+  });
+  player.career.wins += 1;
+  addEvent(room, 'win', room.message, { actorId: player.id, score: player.score, amount: banked, matchId: room.matchId });
+  botPlans.delete(room.code);
+  return true;
+}
+
+function reconcileShowdown(room) {
+  if (room.phase !== 'playing' || room.mode !== 'showdown' || !room.players.length) return false;
+  const roundLimit = Math.max(5, Number(room.showdownRoundLimit) || 5);
+  const contenderIds = new Set(room.showdownSuddenDeath ? room.showdownContenders || [] : []);
+  const eligible = contenderIds.size ? room.players.filter(player => contenderIds.has(player.id)) : room.players;
+  if (!eligible.length || !eligible.every(player => Number(player.turnsTaken || 0) >= roundLimit)) return false;
+  const highScore = Math.max(...eligible.map(player => player.score));
+  const leaders = eligible.filter(player => player.score === highScore);
+  if (leaders.length === 1) return finishMatch(room, leaders[0]);
+  room.showdownSuddenDeath = true;
+  room.showdownContenders = leaders.map(player => player.id);
+  room.showdownRoundLimit = roundLimit + 1;
+  room.message = `Sudden death! ${leaders.map(player => player.name).join(' and ')} get one more turn.`;
+  addEvent(room, 'sudden_death', room.message, { round: room.showdownRoundLimit, tiedPlayerIds: leaders.map(player => player.id) });
+  return false;
+}
+
+function reconcileWinner(room, preferredPlayer = null, banked = 0) {
+  if (room.phase !== 'playing' || room.winnerId) return false;
+  if (room.mode === 'showdown') return reconcileShowdown(room);
+  const target = modeFor(room).targetScore;
+  if (!Number.isFinite(target)) return false;
+  const eligible = room.players.filter(player => Number(player.score) >= target);
+  if (!eligible.length) return false;
+  const winner = preferredPlayer && eligible.some(player => player.id === preferredPlayer.id)
+    ? preferredPlayer
+    : [...eligible].sort((left, right) => right.score - left.score || left.joinedAt - right.joinedAt)[0];
+  return finishMatch(room, winner, winner.id === preferredPlayer?.id ? banked : 0);
 }
 
 function addSpectator(room, name, profile = null) {
@@ -220,6 +260,8 @@ function addPlayer(room, name, profile = null) {
     career: { games: 0, wins: 0, totalBanked: 0 },
     matchBanked: 0,
     matchFreezes: 0,
+    turnsTaken: 0,
+    isBot: false,
     profileId: profile?.id || null,
     profile: profileSummary(profile),
     ...identitySecrets(),
@@ -230,20 +272,39 @@ function addPlayer(room, name, profile = null) {
   return player;
 }
 
+function resetReadiness(room) {
+  room.players.forEach(player => { player.ready = Boolean(player.isBot); });
+}
+
+function addBot(room, styleValue = 'balanced') {
+  if (room.phase !== 'lobby') throw Object.assign(new Error('Practice players can only join in the lobby.'), { status: 409 });
+  if (room.players.length >= MAX_PLAYERS) throw Object.assign(new Error('The player table is full.'), { status: 409 });
+  const style = botStyle(styleValue);
+  const bot = addPlayer(room, availableBotName(room.players));
+  bot.isBot = true;
+  bot.botStyle = style.id;
+  bot.ready = true;
+  room.message = `${bot.name} joined as a ${style.name.toLowerCase()} practice player`;
+  addEvent(room, 'player_join', room.message, { actorId: bot.id, bot: true, style: style.id });
+  return bot;
+}
+
 function createRoom(name, profile = null) {
   const code = roomCode();
   const room = {
     code,
-    schemaVersion: 3,
+    schemaVersion: 4,
     matchId: 0,
     matchStartedAt: null,
     matchArchived: true,
     hostId: null,
     players: [],
+    departedPlayers: [],
     spectators: [],
     mode: 'classic',
     phase: 'lobby',
     turnIndex: 0,
+    turnNumber: 0,
     turnScore: 0,
     rollStreak: 0,
     doubleUsed: false,
@@ -255,6 +316,9 @@ function createRoom(name, profile = null) {
     lastRollKind: 'normal',
     lastReward: null,
     winnerId: null,
+    showdownRoundLimit: 5,
+    showdownSuddenDeath: false,
+    showdownContenders: [],
     message: 'Waiting for players',
     chat: [],
     reactions: [],
@@ -354,8 +418,11 @@ function publicState(room, playerId) {
     phase: room.phase,
     hostId: room.hostId,
     meId: playerId,
-    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile }) => ({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile })),
-    spectators: (room.spectators || []).map(({ id, name, profile }) => ({ id, name, profile })),
+    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile, turnsTaken, isBot, botStyle: style }) => ({
+      id, name, score, shieldAvailable, frozen, stats, ready, career, profile: profileSummary(profile),
+      turnsTaken: Number(turnsTaken || 0), isBot: Boolean(isBot), botStyle: isBot ? botStyle(style).id : null
+    })),
+    spectators: (room.spectators || []).map(({ id, name, profile }) => ({ id, name, profile: profileSummary(profile) })),
     meRole: room.players.some(player => player.id === playerId) ? 'player' : 'spectator',
     meRejoinCode: [...room.players, ...(room.spectators || [])].find(person => person.id === playerId)?.rejoinCode || null,
     mode: modeFor(room),
@@ -384,7 +451,14 @@ function publicState(room, playerId) {
     awards: awardsFor(room),
     allReady: room.players.length >= 2 && room.players.every(player => player.ready),
     targetScore: modeFor(room).targetScore,
-    schemaVersion: 3,
+    showdown: room.mode === 'showdown' ? {
+      round: Math.max(1, Math.min(room.showdownRoundLimit || 5, ...room.players.map(player => Number(player.turnsTaken || 0) + 1))),
+      turnLimit: room.showdownRoundLimit || 5,
+      suddenDeath: Boolean(room.showdownSuddenDeath)
+    } : null,
+    botStyles: Object.values(BOT_STYLES).map(({ id, name }) => ({ id, name })),
+    schemaVersion: 4,
+    appVersion: APP_VERSION,
     maxPlayers: MAX_PLAYERS,
     maxSpectators: MAX_SPECTATORS,
     version: room.version
@@ -406,13 +480,49 @@ function bearerToken(req) {
   return String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
 }
 
-function throttleAuth(req, scope) {
+function requestClientIp(req) {
+  const socketIp = String(req.socket.remoteAddress || 'unknown');
+  const trustedLocalProxy = socketIp === '127.0.0.1' || socketIp === '::1' || socketIp === '::ffff:127.0.0.1';
+  const cloudflareIp = String(req.headers['cf-connecting-ip'] || '').trim();
+  return trustedLocalProxy && /^[0-9a-f:.]{3,45}$/i.test(cloudflareIp) ? cloudflareIp : socketIp;
+}
+
+function authAttemptKey(req, scope) {
+  return `${scope}:${requestClientIp(req)}`;
+}
+
+function recentAuthAttempts(req, scope) {
   const now = Date.now();
-  const key = `${scope}:${req.socket.remoteAddress || 'unknown'}`;
+  const key = authAttemptKey(req, scope);
   const recent = (authAttempts.get(key) || []).filter(at => now - at < 5 * 60 * 1000);
-  if (recent.length >= 8) throw Object.assign(new Error('Too many login attempts. Wait five minutes.'), { status: 429 });
+  if (recent.length) authAttempts.set(key, recent);
+  else authAttempts.delete(key);
+  return { key, recent, now };
+}
+
+function checkAuthThrottle(req, scope, limit = 8) {
+  const { recent } = recentAuthAttempts(req, scope);
+  if (recent.length >= limit) throw Object.assign(new Error('Too many login attempts. Wait five minutes.'), { status: 429 });
+}
+
+function recordAuthFailure(req, scope) {
+  const { key, recent, now } = recentAuthAttempts(req, scope);
   recent.push(now);
   authAttempts.set(key, recent);
+  if (authAttempts.size > 1000) {
+    for (const [candidate, attempts] of authAttempts) {
+      if (!attempts.some(at => now - at < 5 * 60 * 1000)) authAttempts.delete(candidate);
+    }
+  }
+}
+
+function throttleCreation(req) {
+  checkAuthThrottle(req, 'profile-create', 30);
+  recordAuthFailure(req, 'profile-create');
+}
+
+function clearAuthThrottle(req, scope) {
+  authAttempts.delete(authAttemptKey(req, scope));
 }
 
 function requireMember(room, playerId, sessionToken) {
@@ -424,32 +534,100 @@ function requireMember(room, playerId, sessionToken) {
 }
 
 function nextTurn(room, message) {
+  const completed = room.players[room.turnIndex];
+  if (completed) completed.turnsTaken = Number(completed.turnsTaken || 0) + 1;
   room.turnScore = 0;
   room.rollStreak = 0;
   room.doubleUsed = false;
   room.freezeUsed = false;
+  let showdownNote = '';
+  const reconcileRound = () => {
+    const previousLimit = room.showdownRoundLimit || 5;
+    if (reconcileWinner(room)) return true;
+    if ((room.showdownRoundLimit || 5) > previousLimit) showdownNote = ` • ${room.message}`;
+    return false;
+  };
+  if (reconcileRound()) return;
   const skipped = [];
+  let checked = 0;
   do {
     room.turnIndex = (room.turnIndex + 1) % room.players.length;
-    if (room.players[room.turnIndex].frozen) {
-      room.players[room.turnIndex].frozen = false;
-      skipped.push(room.players[room.turnIndex].name);
+    checked += 1;
+    const candidate = room.players[room.turnIndex];
+    const activeContender = !room.showdownSuddenDeath
+      || !room.showdownContenders?.length
+      || room.showdownContenders.includes(candidate.id);
+    if (!activeContender) continue;
+    if (candidate.frozen) {
+      candidate.frozen = false;
+      candidate.turnsTaken = Number(candidate.turnsTaken || 0) + 1;
+      skipped.push(candidate.name);
+      if (reconcileRound()) return;
     } else {
       break;
     }
-  } while (skipped.length < room.players.length);
+  } while (checked < room.players.length * 2);
+  room.turnNumber = Number(room.turnNumber || 0) + 1 + skipped.length;
   room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
   const freezeNote = skipped.length ? ` • ❄ ${skipped.join(', ')} ${skipped.length === 1 ? 'loses' : 'lose'} a turn` : '';
-  room.message = (message || `${room.players[room.turnIndex].name}'s turn`) + freezeNote;
+  room.message = (message || `${room.players[room.turnIndex].name}'s turn`) + freezeNote + showdownNote;
 }
 
 function expireTurnIfNeeded(room, now = Date.now()) {
   if (room.phase !== 'playing' || room.paused || !room.turnDeadline || room.turnDeadline > now) return false;
   const player = room.players[room.turnIndex];
-  nextTurn(room, `${player.name} ran out of time — turn pot lost!`);
-  addEvent(room, 'timeout', room.message, { actorId: player.id });
+  const message = `${player.name} ran out of time — turn pot lost!`;
+  addEvent(room, 'timeout', message, { actorId: player.id });
+  nextTurn(room, message);
   bump(room);
   persistRooms();
+  if (room.phase === 'finished' && !room.matchArchived) {
+    archiveCompletedMatch(room).catch(error => console.error('Could not record completed match:', error.message));
+  }
+  return true;
+}
+
+function processBotTurn(room, now = Date.now(), random = Math.random) {
+  if (room.phase !== 'playing' || room.paused || !room.players.length) {
+    botPlans.delete(room.code);
+    return false;
+  }
+  const bot = room.players[room.turnIndex];
+  if (!bot?.isBot) {
+    botPlans.delete(room.code);
+    return false;
+  }
+  const signature = `${room.matchId}:${room.turnNumber || 0}:${bot.id}`;
+  let plan = botPlans.get(room.code);
+  if (!plan || plan.signature !== signature) {
+    plan = { signature, dueAt: now + 650 + Math.floor(random() * 751) };
+    botPlans.set(room.code, plan);
+    return false;
+  }
+  if (now < plan.dueAt) return false;
+
+  const botRoom = {
+    ...room,
+    targetScore: modeFor(room).targetScore,
+    riskPercent: riskFor(room).percent
+  };
+  const decision = chooseBotAction(botRoom, bot, random);
+  try {
+    action(room, bot.id, decision.type, decision.targetId);
+  } catch (error) {
+    console.error(`Practice player ${bot.name} could not act:`, error.message);
+    botPlans.delete(room.code);
+    return false;
+  }
+  const current = room.players[room.turnIndex];
+  if (room.phase === 'playing' && current?.id === bot.id) {
+    botPlans.set(room.code, {
+      signature: `${room.matchId}:${room.turnNumber || 0}:${bot.id}`,
+      dueAt: now + 650 + Math.floor(random() * 751)
+    });
+  } else {
+    botPlans.delete(room.code);
+  }
   return true;
 }
 
@@ -470,13 +648,34 @@ function action(room, playerId, type, targetId) {
     return;
   }
 
+  if (type === 'add_bot') {
+    if (playerId !== room.hostId) throw Object.assign(new Error('Only the host can add a practice player.'), { status: 403 });
+    addBot(room, targetId);
+    bump(room);
+    persistRooms();
+    return;
+  }
+
+  if (type === 'remove_bot') {
+    if (playerId !== room.hostId) throw Object.assign(new Error('Only the host can remove a practice player.'), { status: 403 });
+    if (room.phase !== 'lobby') throw Object.assign(new Error('Practice players can only leave in the lobby.'), { status: 409 });
+    const index = room.players.findIndex(candidate => candidate.id === targetId && candidate.isBot);
+    if (index < 0) throw Object.assign(new Error('Practice player not found.'), { status: 404 });
+    const [removed] = room.players.splice(index, 1);
+    room.message = `${removed.name} left the practice table`;
+    addEvent(room, 'player_leave', room.message, { actorId: removed.id, bot: true });
+    bump(room);
+    persistRooms();
+    return;
+  }
+
   if (type === 'set_mode') {
     if (playerId !== room.hostId) throw Object.assign(new Error('Only FALCON can choose the mode.'), { status: 403 });
     if (room.phase !== 'lobby') throw Object.assign(new Error('Choose a mode before the match starts.'), { status: 409 });
     if (!MODES[targetId]) throw Object.assign(new Error('Unknown game mode.'), { status: 400 });
     room.mode = targetId;
     room.turnDurationMs = MODES[targetId].turnMs;
-    room.players.forEach(player => { player.ready = false; });
+    resetReadiness(room);
     room.message = `FALCON selected ${MODES[targetId].name} mode`;
     addEvent(room, 'mode', room.message, { actorId: playerId, mode: targetId });
     bump(room);
@@ -497,8 +696,14 @@ function action(room, playerId, type, targetId) {
     room.players.forEach(candidate => {
       candidate.matchBanked = 0;
       candidate.matchFreezes = 0;
+      candidate.turnsTaken = 0;
     });
+    room.departedPlayers = [];
+    room.showdownRoundLimit = 5;
+    room.showdownSuddenDeath = false;
+    room.showdownContenders = [];
     room.turnIndex = Math.floor(Math.random() * room.players.length);
+    room.turnNumber = 1;
     room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
     room.message = `${room.players[room.turnIndex].name} goes first`;
     addEvent(room, 'start', room.message, { matchId: room.matchId, mode: room.mode });
@@ -517,10 +722,12 @@ function action(room, playerId, type, targetId) {
       player.stats = { rolls: 0, busts: 0, bestBank: 0 };
       player.matchBanked = 0;
       player.matchFreezes = 0;
-      player.ready = false;
+      player.ready = Boolean(player.isBot);
+      player.turnsTaken = 0;
     });
     room.phase = 'lobby';
     room.turnIndex = 0;
+    room.turnNumber = 0;
     room.turnScore = 0;
     room.rollStreak = 0;
     room.doubleUsed = false;
@@ -530,6 +737,10 @@ function action(room, playerId, type, targetId) {
     room.lastRollKind = 'normal';
     room.lastReward = null;
     room.winnerId = null;
+    room.showdownRoundLimit = 5;
+    room.showdownSuddenDeath = false;
+    room.showdownContenders = [];
+    room.departedPlayers = [];
     room.message = 'New round ready — everyone tap Ready';
     room.events = [];
     addEvent(room, 'lobby', room.message, { matchId: room.matchId });
@@ -579,14 +790,16 @@ function action(room, playerId, type, targetId) {
     if (busted) {
       player.stats.busts += 1;
       const shielded = player.shieldAvailable;
+      let message;
       if (shielded) {
         player.shieldAvailable = false;
-        nextTurn(room, `${player.name} BUSTED — Safety Net blocked the −${risk.penalty} penalty!`);
+        message = `${player.name} BUSTED — Safety Net blocked the −${risk.penalty} penalty!`;
       } else {
         player.score -= risk.penalty;
-        nextTurn(room, `${player.name} BUSTED — pot lost and −${risk.penalty} points!`);
+        message = `${player.name} BUSTED — pot lost and −${risk.penalty} points!`;
       }
-      addEvent(room, 'bust', room.message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, doubled, risky });
+      addEvent(room, 'bust', message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, doubled, risky });
+      nextTurn(room, message);
     } else {
       const points = doubled ? roll * 2 : roll;
       const bonus = applySafeRoll(room, points);
@@ -602,6 +815,9 @@ function action(room, playerId, type, targetId) {
     }
     bump(room);
     persistRooms();
+    if (room.phase === 'finished' && !room.matchArchived) {
+      archiveCompletedMatch(room).catch(error => console.error('Could not record completed match:', error.message));
+    }
     return;
   }
 
@@ -614,21 +830,9 @@ function action(room, playerId, type, targetId) {
     player.career ??= { games: 0, wins: 0, totalBanked: 0 };
     player.career.totalBanked += banked;
     player.matchBanked = (player.matchBanked || 0) + banked;
-    if (player.score >= modeFor(room).targetScore) {
-      room.phase = 'finished';
-      room.winnerId = player.id;
-      room.turnScore = 0;
-      room.turnDeadline = null;
-      room.message = `${player.name} wins with ${player.score} points!`;
-      room.players.forEach(candidate => {
-        candidate.career ??= { games: 0, wins: 0, totalBanked: 0 };
-        candidate.career.games += 1;
-      });
-      player.career.wins += 1;
-      addEvent(room, 'win', room.message, { actorId: player.id, score: player.score, amount: banked, matchId: room.matchId });
-    } else {
+    if (!reconcileWinner(room, player, banked)) {
       nextTurn(room, `${player.name} banked ${banked} points`);
-      addEvent(room, 'bank', room.message, { actorId: player.id, amount: banked, score: player.score });
+      if (room.phase === 'playing') addEvent(room, 'bank', room.message, { actorId: player.id, amount: banked, score: player.score });
     }
     bump(room);
     persistRooms();
@@ -651,11 +855,13 @@ function resetMatch(room) {
     player.stats = { rolls: 0, busts: 0, bestBank: 0 };
     player.matchBanked = 0;
     player.matchFreezes = 0;
-    player.ready = false;
+    player.ready = Boolean(player.isBot);
+    player.turnsTaken = 0;
   });
   room.phase = 'lobby';
   room.paused = false;
   room.turnIndex = 0;
+  room.turnNumber = 0;
   room.turnScore = 0;
   room.rollStreak = 0;
   room.doubleUsed = false;
@@ -665,6 +871,10 @@ function resetMatch(room) {
   room.lastRollKind = 'normal';
   room.lastReward = null;
   room.winnerId = null;
+  room.showdownRoundLimit = 5;
+  room.showdownSuddenDeath = false;
+  room.showdownContenders = [];
+  room.departedPlayers = [];
   room.message = 'Match reset by FALCON — ready when you are';
   room.events = [];
 }
@@ -682,7 +892,10 @@ function adminRoomState(room) {
       stats: player.stats,
       ready: player.ready,
       career: player.career,
-      profile: player.profile
+      profile: player.profile,
+      turnsTaken: Number(player.turnsTaken || 0),
+      isBot: Boolean(player.isBot),
+      botStyle: player.isBot ? botStyle(player.botStyle).id : null
     })),
     spectators: (room.spectators || []).map(({ id, name, profile }) => ({ id, name, profile }))
   };
@@ -713,19 +926,35 @@ function adminAction(room, type, payload = {}) {
     if (!MODES[payload.mode]) throw Object.assign(new Error('Unknown game mode.'), { status: 400 });
     room.mode = payload.mode;
     room.turnDurationMs = MODES[payload.mode].turnMs;
-    room.players.forEach(player => { player.ready = false; });
+    resetReadiness(room);
     room.message = `FALCON selected ${MODES[payload.mode].name} mode`;
+  } else if (type === 'add_bot') {
+    addBot(room, payload.style || 'balanced');
+  } else if (type === 'remove_bot') {
+    if (room.phase !== 'lobby') throw Object.assign(new Error('Practice players can only leave in the lobby.'), { status: 409 });
+    const index = room.players.findIndex(candidate => candidate.id === payload.playerId && candidate.isBot);
+    if (index < 0) throw Object.assign(new Error('Practice player not found.'), { status: 404 });
+    const [removed] = room.players.splice(index, 1);
+    room.message = `${removed.name} left the practice table`;
+    addEvent(room, 'player_leave', room.message, { actorId: removed.id, bot: true });
   } else if (type === 'score') {
     const player = room.players.find(candidate => candidate.id === payload.playerId);
     const delta = Math.round(Number(payload.delta));
     if (!player || !Number.isFinite(delta) || delta < -100 || delta > 100) throw Object.assign(new Error('Invalid score adjustment.'), { status: 400 });
     player.score += delta;
-    room.message = `FALCON ${delta >= 0 ? 'added' : 'removed'} ${Math.abs(delta)} points ${delta >= 0 ? 'to' : 'from'} ${player.id === room.hostId ? 'FALCON' : player.name}`;
+    if (!reconcileWinner(room, player)) {
+      room.message = `FALCON ${delta >= 0 ? 'added' : 'removed'} ${Math.abs(delta)} points ${delta >= 0 ? 'to' : 'from'} ${player.id === room.hostId ? 'FALCON' : player.name}`;
+    }
   } else if (type === 'remove_player') {
     const index = room.players.findIndex(candidate => candidate.id === payload.playerId);
     if (index < 0) throw Object.assign(new Error('Player not found.'), { status: 404 });
     if (room.players[index].id === room.hostId) throw Object.assign(new Error('FALCON cannot remove the admin.'), { status: 409 });
     const [removed] = room.players.splice(index, 1);
+    if (room.phase === 'playing') {
+      room.departedPlayers ??= [];
+      room.departedPlayers.push(JSON.parse(JSON.stringify(removed)));
+    }
+    if (room.showdownSuddenDeath) room.showdownContenders = (room.showdownContenders || []).filter(id => id !== removed.id);
     if (index < room.turnIndex) room.turnIndex -= 1;
     else if (index === room.turnIndex) {
       room.turnIndex %= Math.max(1, room.players.length);
@@ -737,8 +966,11 @@ function adminAction(room, type, payload = {}) {
     }
     if (removed.id === room.winnerId || (room.players.length < 2 && room.phase === 'playing')) {
       resetMatch(room);
+    } else if (room.phase === 'playing' && room.mode === 'showdown' && room.showdownSuddenDeath && room.showdownContenders.length === 1) {
+      const remaining = room.players.find(player => player.id === room.showdownContenders[0]);
+      if (remaining) finishMatch(room, remaining);
     }
-    room.message = `${removed.name} was removed by FALCON`;
+    if (room.phase !== 'finished') room.message = `${removed.name} was removed by FALCON`;
   } else if (type === 'remove_spectator') {
     const index = (room.spectators || []).findIndex(candidate => candidate.id === payload.playerId);
     if (index < 0) throw Object.assign(new Error('Spectator not found.'), { status: 404 });
@@ -765,6 +997,9 @@ function adminAction(room, type, payload = {}) {
   addEvent(room, 'admin', room.message, { action: type });
   bump(room);
   persistRooms();
+  if (room.phase === 'finished' && !room.matchArchived) {
+    archiveCompletedMatch(room).catch(error => console.error('Could not record completed match:', error.message));
+  }
 }
 
 function isAdminRequest(req) {
@@ -778,30 +1013,6 @@ function sendJson(res, status, data) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-    'Cache-Control': 'no-store'
-  });
-  res.end(body);
-}
-
-function csvCell(value) {
-  if (value === null || value === undefined) return '';
-  let normalized = value instanceof Date ? value.toISOString() : String(value);
-  if (typeof value === 'string' && /^[=+\-@]/.test(normalized)) normalized = `'${normalized}`;
-  return /[",\r\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
-}
-
-function sendCsv(res, filename, rows) {
-  const fields = rows.length ? Object.keys(rows[0]) : [
-    'match_record_id', 'room_code', 'match_number', 'mode', 'target_score', 'started_at',
-    'ended_at', 'winner_name', 'winner_score', 'player_id', 'player_name', 'final_score',
-    'rolls', 'busts', 'best_bank', 'banked_points', 'freezes_used', 'is_winner'
-  ];
-  const lines = [fields.map(csvCell).join(','), ...rows.map(row => fields.map(field => csvCell(row[field])).join(','))];
-  const body = `\uFEFF${lines.join('\r\n')}`;
-  res.writeHead(200, {
-    'Content-Type': 'text/csv; charset=utf-8',
-    'Content-Disposition': `attachment; filename="${filename}"`,
     'Content-Length': Buffer.byteLength(body),
     'Cache-Control': 'no-store'
   });
@@ -850,19 +1061,31 @@ const server = http.createServer(async (req, res) => {
     const parts = url.pathname.split('/').filter(Boolean);
 
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return sendJson(res, 200, { ok: true, rooms: rooms.size, storage: database.enabled ? 'postgresql' : 'json' });
+      return sendJson(res, 200, { ok: true, rooms: rooms.size, storage: 'json', version: APP_VERSION });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/leaderboard') {
+      return sendJson(res, 200, { version: APP_VERSION, leaderboard: await profiles.leaderboard(url.searchParams.get('limit'), url.searchParams.get('sort')) });
     }
 
     if (parts[0] === 'api' && parts[1] === 'profiles') {
       if (req.method === 'POST' && parts.length === 2) {
-        throttleAuth(req, 'profile-create');
+        throttleCreation(req);
         const { displayName, pin } = await readJson(req);
         return sendJson(res, 201, await profiles.create(displayName, pin));
       }
       if (req.method === 'POST' && parts[2] === 'login' && parts.length === 3) {
-        throttleAuth(req, 'profile-login');
         const { code, pin } = await readJson(req);
-        return sendJson(res, 200, await profiles.login(code, pin));
+        const scope = `profile-login:${normalizeCode(code)}`;
+        checkAuthThrottle(req, scope);
+        try {
+          const login = await profiles.login(code, pin);
+          clearAuthThrottle(req, scope);
+          return sendJson(res, 200, login);
+        } catch (error) {
+          if (error.status === 401) recordAuthFailure(req, scope);
+          throw error;
+        }
       }
       if (req.method === 'GET' && parts[2] === 'me' && parts.length === 3) {
         const profile = await profiles.authenticate(bearerToken(req));
@@ -874,13 +1097,14 @@ const server = http.createServer(async (req, res) => {
 
     if (parts[0] === 'api' && parts[1] === 'admin') {
       if (!ADMIN_ENABLED) return sendJson(res, 404, { error: 'Not found.' });
-      if (!isAdminRequest(req)) return sendJson(res, 401, { error: 'Invalid admin key.' });
-      if (req.method === 'GET' && parts[2] === 'records' && parts.length === 3) {
-        return sendJson(res, 200, await database.records(url.searchParams.get('limit')));
+      if (!isAdminRequest(req)) {
+        checkAuthThrottle(req, 'admin');
+        recordAuthFailure(req, 'admin');
+        return sendJson(res, 401, { error: 'Invalid admin key.' });
       }
-      if (req.method === 'GET' && parts[2] === 'records.csv' && parts.length === 3) {
-        const rows = await database.accessRows(url.searchParams.get('limit'));
-        return sendCsv(res, 'dice-night-match-records.csv', rows);
+      clearAuthThrottle(req, 'admin');
+      if (req.method === 'GET' && parts[2] === 'records' && parts.length === 3) {
+        return sendJson(res, 200, await recordsStore.records(url.searchParams.get('limit')));
       }
       if (req.method === 'GET' && parts[2] === 'rooms' && parts.length === 3) {
         return sendJson(res, 200, { rooms: [...rooms.values()].map(adminRoomState) });
@@ -891,6 +1115,7 @@ const server = http.createServer(async (req, res) => {
         if (!room) return sendJson(res, 404, { error: 'Room not found.' });
         const payload = await readJson(req);
         if (payload.type === 'close') {
+          botPlans.delete(code);
           rooms.delete(code);
           retiredRooms.add(code);
           persistRooms();
@@ -898,6 +1123,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 200, { closed: true, code });
         }
         adminAction(room, payload.type, payload);
+        if (room.phase === 'finished' && !room.matchArchived) await archiveCompletedMatch(room);
         return sendJson(res, 200, { room: adminRoomState(room) });
       }
       return sendJson(res, 404, { error: 'Admin route not found.' });
@@ -927,11 +1153,14 @@ const server = http.createServer(async (req, res) => {
         const everyone = [...room.players, ...(room.spectators || [])];
         const returning = everyone.find(person => person.name.toLowerCase() === cleaned.toLowerCase());
         if (returning) {
+          const rejoinScope = `room-rejoin:${code}:${cleaned.toLowerCase()}`;
           const profileOwnsSeat = profile && returning.profileId === profile.id;
           if (!profileOwnsSeat && !secureEqual(returning.rejoinCode, rejoinCode)) {
-            throttleAuth(req, 'room-rejoin');
+            checkAuthThrottle(req, rejoinScope);
+            recordAuthFailure(req, rejoinScope);
             return sendJson(res, 401, { error: 'That name is saved. Enter its private 6-digit rejoin key.' });
           }
+          clearAuthThrottle(req, rejoinScope);
           returning.sessionToken = crypto.randomBytes(24).toString('base64url');
           if (profileOwnsSeat) returning.profile = profileSummary(profile);
           const spectatorIndex = (room.spectators || []).findIndex(person => person.id === returning.id);
@@ -940,7 +1169,7 @@ const server = http.createServer(async (req, res) => {
             room.spectators.splice(spectatorIndex, 1);
             Object.assign(returning, { score: 0, shieldAvailable: true, frozen: false, stats: { rolls: 0, busts: 0, bestBank: 0 }, ready: false, career: returning.career || { games: 0, wins: 0, totalBanked: 0 } });
             room.players.push(returning);
-            room.players.forEach(candidate => { candidate.ready = false; });
+            resetReadiness(room);
             room.message = `${returning.name} moved from the gallery to the table`;
             addEvent(room, 'player_join', room.message, { actorId: returning.id, promoted: true });
           } else {
@@ -966,7 +1195,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 409, { error: 'This profile already has a seat in the room.' });
         }
         const player = addPlayer(room, cleaned, profile);
-        room.players.forEach(candidate => { candidate.ready = false; });
+        resetReadiness(room);
         room.message = `${cleaned} joined the table`;
         addEvent(room, 'player_join', room.message, { actorId: player.id });
         bump(room);
@@ -1031,7 +1260,7 @@ const server = http.createServer(async (req, res) => {
 
       if (req.method === 'GET' && parts.length === 3) {
         const playerId = url.searchParams.get('playerId');
-        const sessionToken = bearerToken(req) || url.searchParams.get('sessionToken');
+        const sessionToken = bearerToken(req);
         requireMember(room, playerId, sessionToken);
         return sendJson(res, 200, { room: publicState(room, playerId) });
       }
@@ -1070,16 +1299,27 @@ const cleanup = setInterval(() => {
   let changed = false;
   for (const [code, room] of rooms) {
     if (room.updatedAt < cutoff) {
+      botPlans.delete(code);
       rooms.delete(code);
       changed = true;
     }
   }
-  if (changed) persistRooms();
+  if (changed) {
+    try { persistRooms(); }
+    catch (error) { console.error('Could not save expired-room cleanup:', error.message); }
+  }
 }, 30 * 60 * 1000);
 cleanup.unref();
 
 const turnClock = setInterval(() => {
-  for (const room of rooms.values()) expireTurnIfNeeded(room);
+  for (const room of rooms.values()) {
+    try {
+      expireTurnIfNeeded(room);
+      processBotTurn(room);
+    } catch (error) {
+      console.error(`Could not process room ${room.code}:`, error.message);
+    }
+  }
 }, 250);
 turnClock.unref();
 
@@ -1105,7 +1345,7 @@ if (require.main === module) {
     console.log(`${signal} received, saving game state...`);
     persistRooms();
     server.close(async () => {
-      await database.close();
+      await recordsStore.close();
       process.exit(0);
     });
   };
@@ -1113,4 +1353,9 @@ if (require.main === module) {
   process.once('SIGINT', () => shutdown('SIGINT'));
 }
 
-module.exports = { server, startServer, database, profiles, rooms, retiredRooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor, riskDieOutcome, applySafeRoll, addChatMessage, addReaction, addSpectator, expireTurnIfNeeded, MODES };
+module.exports = {
+  server, startServer, recordsStore, profiles, rooms, retiredRooms, createRoom, action, adminAction,
+  publicState, riskFor, riskDieFor, riskDieOutcome, applySafeRoll, addChatMessage, addReaction,
+  addSpectator, addBot, expireTurnIfNeeded, processBotTurn, finishMatch, reconcileWinner, MODES,
+  APP_VERSION
+};
