@@ -10,7 +10,7 @@ const { readJsonFile, writeJsonFile } = require('./json-store');
 
 const PORT = Number(process.env.PORT) || 4173;
 const HOST = process.env.HOST || '0.0.0.0';
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '3.1.0';
 const MAX_PLAYERS = 9;
 const TURN_MS = 10_000;
 const MAX_SPECTATORS = 20;
@@ -18,7 +18,8 @@ const MODES = Object.freeze({
   classic: { id: 'classic', name: 'Classic', targetScore: 100, turnMs: 10_000, riskStart: 16, riskStep: 8, description: 'The balanced original' },
   blitz: { id: 'blitz', name: 'Blitz', targetScore: 50, turnMs: 10_000, riskStart: 20, riskStep: 10, description: 'Fast, loud, and dangerous' },
   marathon: { id: 'marathon', name: 'Marathon', targetScore: 200, turnMs: 10_000, riskStart: 12, riskStep: 6, description: 'Long game, deeper strategy' },
-  showdown: { id: 'showdown', name: 'Five-Round Showdown', targetScore: null, turnMs: 10_000, riskStart: 16, riskStep: 8, description: 'Five turns each, then sudden death if tied' }
+  showdown: { id: 'showdown', name: 'Five-Round Showdown', targetScore: null, turnMs: 10_000, riskStart: 16, riskStep: 8, description: 'Five turns each, then sudden death if tied' },
+  battle: { id: 'battle', name: 'Battle Dice', targetScore: null, turnMs: 10_000, riskStart: 17, riskStep: 0, description: 'Attack rivals and be the last player standing' }
 });
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'rooms.json');
 const RETIRED_FILE = process.env.RETIRED_FILE || path.join(__dirname, 'data', 'retired-rooms.json');
@@ -60,9 +61,9 @@ function loadSavedRooms(saved) {
   for (const room of saved) {
     if (room?.code && Array.isArray(room.players) && room.updatedAt > cutoff) {
         room.rollStreak ??= 0;
-        room.doubleUsed ??= false;
         room.lastRollKind ??= 'normal';
         room.lastReward ??= null;
+        room.lastOutcome ??= null;
         room.freezeUsed ??= false;
         room.schemaVersion = 4;
         room.matchId ??= 0;
@@ -200,7 +201,9 @@ function finishMatch(room, player, banked = 0) {
   room.matchArchived = false;
   room.turnScore = 0;
   room.turnDeadline = null;
-  room.message = `${player.name} wins with ${player.score} points!`;
+  room.message = room.mode === 'battle'
+    ? `${player.name} is the last player standing with ${player.score} health!`
+    : `${player.name} wins with ${player.score} points!`;
   room.players.forEach(candidate => {
     candidate.career ??= { games: 0, wins: 0, totalBanked: 0 };
     candidate.career.games += 1;
@@ -228,8 +231,15 @@ function reconcileShowdown(room) {
   return false;
 }
 
+function reconcileBattle(room) {
+  if (room.phase !== 'playing' || room.mode !== 'battle') return false;
+  const standing = room.players.filter(player => Number(player.score) > 0);
+  return standing.length === 1 ? finishMatch(room, standing[0]) : false;
+}
+
 function reconcileWinner(room, preferredPlayer = null, banked = 0) {
   if (room.phase !== 'playing' || room.winnerId) return false;
+  if (room.mode === 'battle') return reconcileBattle(room);
   if (room.mode === 'showdown') return reconcileShowdown(room);
   const target = modeFor(room).targetScore;
   if (!Number.isFinite(target)) return false;
@@ -307,7 +317,6 @@ function createRoom(name, profile = null) {
     turnNumber: 0,
     turnScore: 0,
     rollStreak: 0,
-    doubleUsed: false,
     freezeUsed: false,
     paused: false,
     turnDurationMs: TURN_MS,
@@ -315,6 +324,7 @@ function createRoom(name, profile = null) {
     lastRoll: null,
     lastRollKind: 'normal',
     lastReward: null,
+    lastOutcome: null,
     winnerId: null,
     showdownRoundLimit: 5,
     showdownSuddenDeath: false,
@@ -359,6 +369,27 @@ function riskDieOutcome(room, randomInt = crypto.randomInt) {
   if (busted) return { busted: true, reward: 0, risk };
   const rewards = [10, 10, 20, 20, 30];
   return { busted: false, reward: rewards[randomInt(rewards.length)], risk };
+}
+
+function battleDieOutcome(room, type, randomInt = crypto.randomInt) {
+  if (type === 'risk_die') {
+    const result = riskDieOutcome(room, randomInt);
+    return result.busted
+      ? { dieKind: 'risk', busted: true, face: 'skull', damage: 0, selfDamage: 10, risk: result.risk }
+      : { dieKind: 'risk', busted: false, face: `+${result.reward}`, damage: result.reward, selfDamage: 0, risk: result.risk };
+  }
+  const face = randomInt(1, 7);
+  return face === 1
+    ? { dieKind: 'normal', busted: true, face, damage: 0, selfDamage: 5 }
+    : { dieKind: 'normal', busted: false, face, damage: face, selfDamage: 0 };
+}
+
+function standingOpponent(room, playerIndex) {
+  for (let offset = 1; offset < room.players.length; offset += 1) {
+    const candidate = room.players[(playerIndex + offset) % room.players.length];
+    if (Number(candidate.score) > 0) return candidate;
+  }
+  return null;
 }
 
 function applySafeRoll(room, roll) {
@@ -430,10 +461,7 @@ function publicState(room, playerId) {
     turnScore: room.turnScore,
     rollStreak: room.rollStreak || 0,
     risk: riskFor(room),
-    doubleRisk: riskFor(room, 15).percent,
     riskDieRisk: riskDieFor(room),
-    doubleUsed: room.doubleUsed || false,
-    riskDieUsed: room.doubleUsed || false,
     freezeUsed: room.freezeUsed || false,
     paused: room.paused || false,
     turnDurationMs: room.turnDurationMs || TURN_MS,
@@ -443,6 +471,8 @@ function publicState(room, playerId) {
     lastRoll: room.lastRoll,
     lastRollKind: room.lastRollKind || 'normal',
     lastReward: room.lastReward || null,
+    lastOutcome: room.lastOutcome || null,
+    gameSystem: room.mode === 'battle' ? 'battle' : 'royale',
     winnerId: room.winnerId,
     message: room.message,
     chat: (room.chat || []).map(({ id, playerId: senderId, name, text, at }) => ({ id, playerId: senderId, name, text, at })),
@@ -538,7 +568,6 @@ function nextTurn(room, message) {
   if (completed) completed.turnsTaken = Number(completed.turnsTaken || 0) + 1;
   room.turnScore = 0;
   room.rollStreak = 0;
-  room.doubleUsed = false;
   room.freezeUsed = false;
   let showdownNote = '';
   const reconcileRound = () => {
@@ -557,7 +586,8 @@ function nextTurn(room, message) {
     const activeContender = !room.showdownSuddenDeath
       || !room.showdownContenders?.length
       || room.showdownContenders.includes(candidate.id);
-    if (!activeContender) continue;
+    const activeBattlePlayer = room.mode !== 'battle' || Number(candidate.score) > 0;
+    if (!activeContender || !activeBattlePlayer) continue;
     if (candidate.frozen) {
       candidate.frozen = false;
       candidate.turnsTaken = Number(candidate.turnsTaken || 0) + 1;
@@ -631,7 +661,7 @@ function processBotTurn(room, now = Date.now(), random = Math.random) {
   return true;
 }
 
-function action(room, playerId, type, targetId) {
+function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
   const playerIndex = room.players.findIndex(player => player.id === playerId);
   if (playerIndex < 0) throw Object.assign(new Error('You are not in this room.'), { status: 403 });
 
@@ -694,11 +724,16 @@ function action(room, playerId, type, targetId) {
     room.matchArchived = false;
     room.events = [];
     room.players.forEach(candidate => {
+      if (room.mode === 'battle') {
+        candidate.score = 30;
+        candidate.shieldAvailable = false;
+      }
       candidate.matchBanked = 0;
       candidate.matchFreezes = 0;
       candidate.turnsTaken = 0;
     });
     room.departedPlayers = [];
+    room.lastOutcome = null;
     room.showdownRoundLimit = 5;
     room.showdownSuddenDeath = false;
     room.showdownContenders = [];
@@ -730,12 +765,12 @@ function action(room, playerId, type, targetId) {
     room.turnNumber = 0;
     room.turnScore = 0;
     room.rollStreak = 0;
-    room.doubleUsed = false;
     room.freezeUsed = false;
     room.turnDeadline = null;
     room.lastRoll = null;
     room.lastRollKind = 'normal';
     room.lastReward = null;
+    room.lastOutcome = null;
     room.winnerId = null;
     room.showdownRoundLimit = 5;
     room.showdownSuddenDeath = false;
@@ -754,10 +789,14 @@ function action(room, playerId, type, targetId) {
   if (playerIndex !== room.turnIndex) throw Object.assign(new Error('Wait for your turn.'), { status: 409 });
 
   const player = room.players[playerIndex];
+  if (room.mode === 'battle' && player.score <= 0) {
+    throw Object.assign(new Error('You are knocked out of this Battle Dice match.'), { status: 409 });
+  }
   if (type === 'freeze') {
     const target = room.players.find(candidate => candidate.id === targetId);
     if (!target || target.id === playerId) throw Object.assign(new Error('Choose another player to freeze.'), { status: 400 });
-    if (player.score < 5) throw Object.assign(new Error('You need 5 banked points to freeze someone.'), { status: 409 });
+    if (room.mode === 'battle' && target.score <= 0) throw Object.assign(new Error('Choose a player who is still standing.'), { status: 400 });
+    if (player.score < 5 || (room.mode === 'battle' && player.score === 5)) throw Object.assign(new Error(room.mode === 'battle' ? 'You need more than 5 health to freeze someone.' : 'You need 5 banked points to freeze someone.'), { status: 409 });
     if (room.freezeUsed) throw Object.assign(new Error('You already used Freeze this turn.'), { status: 409 });
     if (target.frozen) throw Object.assign(new Error(`${target.name} is already frozen.`), { status: 409 });
     player.score -= 5;
@@ -772,21 +811,52 @@ function action(room, playerId, type, targetId) {
     return;
   }
 
-  if (type === 'roll' || type === 'double' || type === 'risk_die') {
-    const doubled = type === 'double';
+  if (room.mode === 'battle' && (type === 'roll' || type === 'risk_die')) {
+    const target = standingOpponent(room, playerIndex);
+    if (!target) {
+      reconcileWinner(room);
+      return;
+    }
+    const outcome = battleDieOutcome(room, type, randomInt);
+    player.stats ??= { rolls: 0, busts: 0, bestBank: 0 };
+    player.career ??= { games: 0, wins: 0, totalBanked: 0 };
+    player.stats.rolls += 1;
+    room.lastRollKind = outcome.dieKind;
+    room.lastRoll = outcome.busted ? 1 : outcome.face;
+    room.lastReward = outcome.busted ? null : outcome.damage;
+    if (outcome.busted) {
+      player.stats.busts += 1;
+      player.score -= outcome.selfDamage;
+      room.message = outcome.dieKind === 'risk'
+        ? `${player.name} rolled a SKULL and lost ${outcome.selfDamage} health!`
+        : `${player.name} rolled 1 and lost ${outcome.selfDamage} health!`;
+    } else {
+      target.score -= outcome.damage;
+      player.matchBanked = (player.matchBanked || 0) + outcome.damage;
+      player.career.totalBanked += outcome.damage;
+      player.stats.bestBank = Math.max(player.stats.bestBank, outcome.damage);
+      room.message = `${player.name} hit ${target.name} for ${outcome.damage} damage with the ${outcome.dieKind === 'risk' ? 'Deadly Risk Die' : 'Normal Die'}!`;
+    }
+    room.lastOutcome = { ...outcome, actorId: player.id, targetId: outcome.busted ? null : target.id };
+    addEvent(room, outcome.busted ? 'battle_bust' : 'battle_hit', room.message, room.lastOutcome);
+    if (!reconcileWinner(room)) nextTurn(room, room.message);
+    bump(room);
+    persistRooms();
+    if (room.phase === 'finished' && !room.matchArchived) archiveCompletedMatch(room).catch(error => console.error('Could not record completed match:', error.message));
+    return;
+  }
+
+  if (type === 'roll' || type === 'risk_die') {
     const risky = type === 'risk_die';
-    if (doubled && room.turnScore < 10) throw Object.assign(new Error('Build a pot of 10 before a Double Roll.'), { status: 409 });
-    if ((doubled || risky) && room.doubleUsed) throw Object.assign(new Error('You already used your Risk Die this turn.'), { status: 409 });
     const riskOutcome = risky ? riskDieOutcome(room) : null;
-    const risk = riskOutcome?.risk || riskFor(room, doubled ? 15 : 0);
+    const risk = riskOutcome?.risk || riskFor(room);
     const busted = risky ? riskOutcome.busted : crypto.randomInt(100) < risk.percent;
     const roll = busted ? 1 : risky ? riskOutcome.reward : crypto.randomInt(2, 7);
     room.lastRoll = busted ? 1 : risky ? 6 : roll;
-    room.lastRollKind = risky ? 'risk' : doubled ? 'double' : 'normal';
+    room.lastRollKind = risky ? 'risk' : 'normal';
     room.lastReward = risky && !busted ? roll : null;
     player.stats ??= { rolls: 0, busts: 0, bestBank: 0 };
     player.stats.rolls += 1;
-    if (doubled || risky) room.doubleUsed = true;
     if (busted) {
       player.stats.busts += 1;
       const shielded = player.shieldAvailable;
@@ -798,20 +868,20 @@ function action(room, playerId, type, targetId) {
         player.score -= risk.penalty;
         message = `${player.name} BUSTED — pot lost and −${risk.penalty} points!`;
       }
-      addEvent(room, 'bust', message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, doubled, risky });
+      room.lastOutcome = { dieKind: risky ? 'risk' : 'normal', busted: true, face: risky ? 'skull' : 1, reward: 0, penalty: shielded ? 0 : risk.penalty, shielded };
+      addEvent(room, 'bust', message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, risky });
       nextTurn(room, message);
     } else {
-      const points = doubled ? roll * 2 : roll;
+      const points = roll;
       const bonus = applySafeRoll(room, points);
+      room.lastOutcome = { dieKind: risky ? 'risk' : 'normal', busted: false, face: risky ? `+${points}` : roll, reward: points, bonus };
       room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
       room.message = risky
         ? `${player.name} hit the Risk Die for ${points} points!${bonus ? ' + 10 HOT STREAK!' : ''}`
-        : doubled
-        ? `${player.name} doubled ${roll} into ${points} points!${bonus ? ' + 10 HOT STREAK!' : ''}`
         : bonus
         ? `${player.name} hit a HOT STREAK — ${roll} + 10 bonus!`
         : `${player.name} rolled ${roll} — risk is climbing`;
-      addEvent(room, bonus ? 'hot_streak' : risky ? 'risk_die' : doubled ? 'double' : 'roll', room.message, { actorId: player.id, die: roll, points, bonus, risky });
+      addEvent(room, risky ? 'risk_die' : bonus ? 'hot_streak' : 'roll', room.message, { actorId: player.id, die: roll, points, bonus, risky });
     }
     bump(room);
     persistRooms();
@@ -822,6 +892,7 @@ function action(room, playerId, type, targetId) {
   }
 
   if (type === 'hold') {
+    if (room.mode === 'battle') throw Object.assign(new Error('Battle Dice turns end after one attack roll.'), { status: 409 });
     if (room.turnScore < 1) throw Object.assign(new Error('Roll before you hold.'), { status: 409 });
     player.score += room.turnScore;
     const banked = room.turnScore;
@@ -864,12 +935,12 @@ function resetMatch(room) {
   room.turnNumber = 0;
   room.turnScore = 0;
   room.rollStreak = 0;
-  room.doubleUsed = false;
   room.freezeUsed = false;
   room.turnDeadline = null;
   room.lastRoll = null;
   room.lastRollKind = 'normal';
   room.lastReward = null;
+  room.lastOutcome = null;
   room.winnerId = null;
   room.showdownRoundLimit = 5;
   room.showdownSuddenDeath = false;
@@ -944,6 +1015,9 @@ function adminAction(room, type, payload = {}) {
     player.score += delta;
     if (!reconcileWinner(room, player)) {
       room.message = `FALCON ${delta >= 0 ? 'added' : 'removed'} ${Math.abs(delta)} points ${delta >= 0 ? 'to' : 'from'} ${player.id === room.hostId ? 'FALCON' : player.name}`;
+      if (room.mode === 'battle' && room.players[room.turnIndex]?.score <= 0) {
+        nextTurn(room, `${room.players[room.turnIndex].name} was knocked out by FALCON`);
+      }
     }
   } else if (type === 'remove_player') {
     const index = room.players.findIndex(candidate => candidate.id === payload.playerId);
@@ -960,13 +1034,13 @@ function adminAction(room, type, payload = {}) {
       room.turnIndex %= Math.max(1, room.players.length);
       room.turnScore = 0;
       room.rollStreak = 0;
-      room.doubleUsed = false;
       room.freezeUsed = false;
       room.turnDeadline = Date.now() + room.turnDurationMs;
     }
-    if (removed.id === room.winnerId || (room.players.length < 2 && room.phase === 'playing')) {
+    const battleResolved = room.phase === 'playing' && room.mode === 'battle' && reconcileWinner(room);
+    if (!battleResolved && (removed.id === room.winnerId || (room.players.length < 2 && room.phase === 'playing'))) {
       resetMatch(room);
-    } else if (room.phase === 'playing' && room.mode === 'showdown' && room.showdownSuddenDeath && room.showdownContenders.length === 1) {
+    } else if (!battleResolved && room.phase === 'playing' && room.mode === 'showdown' && room.showdownSuddenDeath && room.showdownContenders.length === 1) {
       const remaining = room.players.find(player => player.id === room.showdownContenders[0]);
       if (remaining) finishMatch(room, remaining);
     }
@@ -1109,6 +1183,11 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && parts[2] === 'rooms' && parts.length === 3) {
         return sendJson(res, 200, { rooms: [...rooms.values()].map(adminRoomState) });
       }
+      if (req.method === 'POST' && parts[2] === 'leaderboard' && parts[3] === 'reset') {
+        const result = await profiles.resetLeaderboard();
+        await recordsStore.reset();
+        return sendJson(res, 200, { reset: true, ...result });
+      }
       if (req.method === 'POST' && parts[2] === 'rooms' && parts[3]) {
         const code = parts[3].toUpperCase();
         const room = rooms.get(code);
@@ -1235,7 +1314,6 @@ const server = http.createServer(async (req, res) => {
           turnIndex: Math.min(Math.max(0, snapshot.turnIndex || 0), players.length - 1),
           turnScore: Number.isFinite(snapshot.turnScore) ? snapshot.turnScore : 0,
           rollStreak: Number.isFinite(snapshot.rollStreak) ? snapshot.rollStreak : 0,
-          doubleUsed: Boolean(snapshot.doubleUsed),
           freezeUsed: Boolean(snapshot.freezeUsed),
           turnDeadline: snapshot.phase === 'playing' ? Date.now() + (Number.isFinite(snapshot.turnDurationMs) ? snapshot.turnDurationMs : TURN_MS) : null,
           paused: false,
@@ -1355,7 +1433,7 @@ if (require.main === module) {
 
 module.exports = {
   server, startServer, recordsStore, profiles, rooms, retiredRooms, createRoom, action, adminAction,
-  publicState, riskFor, riskDieFor, riskDieOutcome, applySafeRoll, addChatMessage, addReaction,
+  publicState, riskFor, riskDieFor, riskDieOutcome, battleDieOutcome, applySafeRoll, addChatMessage, addReaction,
   addSpectator, addBot, expireTurnIfNeeded, processBotTurn, finishMatch, reconcileWinner, MODES,
   APP_VERSION
 };

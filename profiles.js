@@ -249,6 +249,23 @@ class ProfileService {
       this.persistLocal();
     }
   }
+
+  async resetLeaderboard() {
+    for (const profile of this.local.profiles) {
+      profile.xp = 0;
+      profile.games = 0;
+      profile.wins = 0;
+      profile.totalRolls = 0;
+      profile.totalBusts = 0;
+      profile.bestBank = 0;
+      profile.totalBanked = 0;
+      profile.totalFreezes = 0;
+    }
+    this.local.achievements = this.local.achievements.filter(item => item.key === 'profile_created');
+    this.local.completedMatches = [];
+    this.persistLocal();
+    return { profilesReset: this.local.profiles.length };
+  }
 }
 
 module.exports = { ProfileService, ACHIEVEMENTS, cleanDisplayName, normalizeCode, levelFor };

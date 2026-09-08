@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=40">
+  <link rel="stylesheet" href="/styles.css?v=311">
 </head>
 <body>
   <section id="royale-intro" class="royale-intro" role="dialog" aria-modal="true" aria-labelledby="intro-title">
@@ -17,11 +17,11 @@
     <div class="intro-content">
       <p>A NEW NIGHT BEGINS</p>
       <div class="intro-logo">DICE NIGHT <span>ROYALE</span></div>
-      <h1 id="intro-title">Welcome to<br><em>version 4.</em></h1>
+      <h1 id="intro-title">Welcome to<br><em>version 3.1.</em></h1>
       <div class="intro-features"><span>Practice bots</span><span>Royale leaderboard</span><span>Live match feed</span></div>
-      <div class="intro-actions"><button id="enter-royale" class="primary-button">Enter Dice Night V4 <b>→</b></button><button id="intro-updates" class="text-button">See what’s new</button></div>
+      <div class="intro-actions"><button id="enter-royale" class="primary-button">Enter Dice Night V3.1 <b>→</b></button><button id="intro-updates" class="text-button">See what’s new</button></div>
     </div>
-    <small class="intro-admin">♛FALCON STUDIO</small>
+    <small class="intro-admin">FALCON STUDIO PRESENTS</small>
   </section>
   <div class="grain"></div>
   <header class="topbar">
@@ -33,7 +33,7 @@
       <button id="sound-toggle" class="text-button sound-toggle" type="button" aria-pressed="false" aria-label="Mute game sounds">🔊 <span>Sound</span></button>
       <button id="leaderboard-button" class="text-button leaderboard-link" aria-haspopup="dialog">🏆 Leaderboard</button>
       <button id="profile-button" class="text-button">Player profile</button>
-      <button id="admin-deck-button" class="text-button falcon-control">Falcon controls</button>
+      <button id="admin-deck-button" class="text-button falcon-control" aria-label="Open Admin Panel" aria-haspopup="dialog" aria-controls="admin-deck-dialog">Admin Panel</button>
       <button id="updates-button" class="text-button update-link"><span></span> What’s new</button>
       <button id="how-button" class="text-button">How to play · super easy</button>
     </div>
@@ -42,7 +42,7 @@
   <main>
     <section id="home-screen" class="screen home-screen">
       <div class="hero-copy">
-        <p class="eyebrow">THE MAJOR UPDATE · VERSION 4</p>
+        <p class="eyebrow">THE MAJOR UPDATE · VERSION 3.1</p>
         <h1>Own the table.<br><em>Risk everything.</em></h1>
         <p class="intro">Practice bots, public rankings, a live match feed, richer celebrations, profiles, achievements, and a louder table.</p>
       </div>
@@ -106,11 +106,19 @@
             <p id="lobby-count" class="subtle">1 of 4 seats filled</p>
             <div class="invite-code"><span id="invite-code">—</span></div>
             <p class="microcopy">Share this code or copy the invite link</p>
-            <div id="mode-picker" class="mode-picker">
-              <button data-game-mode="classic" aria-pressed="false"><b>Classic</b><small>100 pts · 10 sec</small></button>
-              <button data-game-mode="blitz" aria-pressed="false"><b>Blitz</b><small>50 pts · 10 sec</small></button>
-              <button data-game-mode="marathon" aria-pressed="false"><b>Marathon</b><small>200 pts · 10 sec</small></button>
-              <button data-game-mode="showdown" aria-pressed="false"><b>Five-Round Showdown</b><small>5 turns each · sudden-death ties</small></button>
+            <div id="mode-picker" class="game-system-picker" aria-label="Choose a game">
+              <section class="game-family royale-family">
+                <div class="game-family-head"><span>GAME 1</span><div><b>Royale Race</b><small>Build a pot, bank it, and chase the crown.</small></div></div>
+                <div class="mode-picker">
+                  <button data-game-mode="classic" aria-pressed="false"><b>Classic</b><small>100 pts</small></button>
+                  <button data-game-mode="blitz" aria-pressed="false"><b>Blitz</b><small>50 pts</small></button>
+                  <button data-game-mode="marathon" aria-pressed="false"><b>Marathon</b><small>200 pts</small></button>
+                  <button data-game-mode="showdown" aria-pressed="false"><b>Showdown</b><small>5 turns</small></button>
+                </div>
+              </section>
+              <button class="game-family battle-family" data-game-mode="battle" aria-pressed="false">
+                <span>GAME 2</span><div><b>Battle Dice</b><small>Start with 30 health. Attack rivals until only one player stands.</small></div><strong>⚔ NEW</strong>
+              </button>
             </div>
             <div id="bot-tools" class="lobby-tools hidden">
               <button id="add-bot-button" class="secondary-button" type="button">＋ Add practice bot</button>
@@ -127,23 +135,33 @@
           </div>
 
           <div id="play-panel" class="center-panel hidden">
+            <p id="active-game-label" class="active-game-label">GAME 1 · ROYALE RACE</p>
             <div class="turn-heading"><p id="turn-label" class="eyebrow">YOUR TURN</p><strong id="turn-timer">10.0s</strong></div>
             <div class="timer-track"><span id="timer-fill"></span></div>
-            <div id="dice" class="dice" aria-label="No roll yet"></div>
-            <div class="turn-score">
+            <div class="dice-choices" role="group" aria-label="Choose one of two dice">
+              <button id="roll-button" class="die-choice normal-die-choice action-button" aria-describedby="normal-die-risk">
+                <span id="normal-die-face" class="choice-die normal-die-face" aria-hidden="true"></span>
+                <span class="die-choice-copy"><b>Normal Die</b><small id="normal-die-reward">Build 2–6 points</small><em id="normal-die-risk">16% bust · −5 saved</em></span>
+              </button>
+              <button id="double-button" class="die-choice deadly-die-choice action-button" aria-describedby="double-risk">
+                <span id="risk-die-face" class="choice-die risk-die-face" aria-hidden="true">☠</span>
+                <span class="die-choice-copy"><b>Deadly Risk Die</b><small>Win +10 / +20 / +30</small><em id="double-risk">50% bust · 5 skulls</em></span>
+              </button>
+            </div>
+            <p id="dice-result-status" class="dice-result-status" aria-live="polite">Choose either die.</p>
+            <div id="turn-pot-panel" class="turn-score">
               <span>TURN POT</span>
               <strong id="turn-score">0</strong>
             </div>
-            <div class="risk-block">
+            <div id="normal-risk-panel" class="risk-block">
               <div class="risk-copy"><span>BUST RISK</span><strong id="risk-percent">16%</strong></div>
               <div class="risk-track"><span id="risk-fill"></span></div>
               <small id="risk-penalty">Roll 1 penalty: −5 points</small>
             </div>
-            <div class="streak-chip">🔥 <span id="streak-progress">3 rolls to +10 bonus</span></div>
-            <div class="game-actions">
-              <button id="roll-button" class="primary-button action-button">Roll dice</button>
+            <div id="streak-chip" class="streak-chip">🔥 <span id="streak-progress">3 rolls to +10 bonus</span></div>
+            <p id="battle-help" class="battle-help hidden">Each roll attacks the next standing rival. Normal 1 costs 5 health; a Risk skull costs 10.</p>
+            <div class="game-actions secondary-actions">
               <button id="hold-button" class="secondary-button action-button">Bank points</button>
-              <button id="double-button" class="double-button action-button">Risk Die <small id="double-risk">5 reward faces + skull</small></button>
               <button id="freeze-button" class="freeze-button action-button">❄ Freeze a player <small>costs 5 pts</small></button>
             </div>
             <div class="reaction-bar" aria-label="Live reactions">
@@ -190,14 +208,14 @@
   <dialog id="rules-dialog">
     <button id="close-rules" class="dialog-close" aria-label="Close">×</button>
     <p class="eyebrow">SUPER EASY GUIDE</p>
-    <h2>Roll. Save. Reach the target.</h2>
+    <h2>Pick a game. Pick a die. Have fun.</h2>
     <div class="baby-rules">
       <article><span>👀</span><div><strong>1. Wait for your name</strong><p>When the game says “YOUR TURN,” it is your turn.</p></div></article>
-      <article><span>🎲</span><div><strong>2. Tap “Roll dice”</strong><p>The number you roll goes into your little green pot.</p></div></article>
+      <article><span>🎲</span><div><strong>2. Pick one of the two dice</strong><p>Normal Die is safer. Deadly Risk Die can give 10, 20, or 30, but skulls hurt.</p></div></article>
       <article><span>💰</span><div><strong>3. Tap “Bank points”</strong><p>This saves the pot into your big score. Saved points are yours.</p></div></article>
       <article><span>☝️</span><div><strong>4. Be careful with 1</strong><p>Roll a 1 and the pot goes away. You also lose 5 saved points.</p></div></article>
       <article><span>⏰</span><div><strong>5. Tap before time runs out</strong><p>Use the timer on screen. If it reaches zero, your turn ends.</p></div></article>
-      <article><span>🏆</span><div><strong>6. Win your game type</strong><p>Reach 50 in Blitz, 100 in Classic, or 200 in Marathon. In Showdown, the highest score after five turns each wins.</p></div></article>
+      <article><span>🏆</span><div><strong>6. Win your game type</strong><p>In Game 1, reach the target or win Showdown. In Game 2, knock out your friends and be the last one standing.</p></div></article>
     </div>
     <details class="extra-rules">
       <summary>Show me the extra tricks</summary>
@@ -205,6 +223,7 @@
         <li><strong>Safety Net:</strong> Your first bad roll does not take 5 points.</li>
         <li><strong>Hot Streak:</strong> Three good rolls in one turn give you 10 extra points.</li>
         <li><strong>Risk Die:</strong> Five faces pay 10, 10, 20, 20, or 30. Five skulls bust you, and more skulls appear as your streak grows.</li>
+        <li><strong>Battle Dice:</strong> Everyone starts with 30 health. Normal rolls hit the next rival for 2–6, while a 1 hurts you for 5. The Deadly Risk Die hits for 10, 20, or 30, but a skull hurts you for 10. Last player standing wins.</li>
         <li><strong>Freeze:</strong> Spend 5 saved points to make a friend miss one turn. Use it once each turn.</li>
       </ul>
     </details>
@@ -212,9 +231,11 @@
 
   <dialog id="updates-dialog" class="updates-dialog">
     <button id="close-updates" class="dialog-close" aria-label="Close">×</button>
-    <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 4.0</p>
+    <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 3.1</p>
     <h2>The table feels alive now.</h2>
     <div class="update-list">
+      <article><span>NEW</span><div><strong>Two truly different dice</strong><p>Choose the cream Normal Die or the black-and-gold Deadly Risk Die on every Royale roll.</p></div></article>
+      <article><span>NEW</span><div><strong>Game 2 · Battle Dice</strong><p>Start with 30 health, attack the next standing rival, and survive until everyone else is knocked out.</p></div></article>
       <article><span>01</span><div><strong>Five-Round Showdown</strong><p>Everyone gets five turns. The highest score wins, and only tied leaders enter sudden death.</p></div></article>
       <article><span>02</span><div><strong>Practice bots</strong><p>FALCON can fill open seats with Careful, Balanced, or Bold rivals for instant testing.</p></div></article>
       <article><span>03</span><div><strong>Royale leaderboard</strong><p>Everyone can see the table’s top players, wins, levels, and banked points.</p></div></article>
@@ -222,14 +243,14 @@
       <article><span>05</span><div><strong>Champion takeover</strong><p>Every win gets a full results screen, original victory music, awards, and final standings.</p></div></article>
       <article><span>06</span><div><strong>Better sound control</strong><p>Mute or restore table sounds at any time. Your choice stays saved on this device.</p></div></article>
       <article><span>07</span><div><strong>Local record book</strong><p>Profiles, achievements, match history, and rankings stay saved with the game.</p></div></article>
-      <article><span>08</span><div><strong>Stronger Falcon controls</strong><p>Manage live rooms and bot-filled test matches without leaving the main website.</p></div></article>
+      <article><span>08</span><div><strong>Stronger Admin Panel</strong><p>Manage rooms, scores, bots, timers, and the leaderboard without leaving the main website.</p></div></article>
       <article><span>09</span><div><strong>Made for every screen</strong><p>Player cards, chat, results, and controls are clearer on phones and keyboards.</p></div></article>
     </div>
   </dialog>
 
   <dialog id="profile-dialog" class="profile-dialog">
     <button id="close-profile" class="dialog-close" aria-label="Close">×</button>
-    <p class="eyebrow">PLAYER PROFILE · V4</p>
+    <p class="eyebrow">PLAYER PROFILE · V3.1</p>
     <h2>Keep your glory.</h2>
     <p class="subtle">Profiles are optional. Guests can always play.</p>
     <div id="profile-signed-out">
@@ -257,16 +278,16 @@
 
   <dialog id="admin-deck-dialog" class="admin-deck-dialog">
     <button id="close-admin-deck" class="dialog-close" aria-label="Close">×</button>
-    <p class="eyebrow">FALCON · PRIVATE CONTROL DECK</p>
+    <p class="eyebrow">FALCON · ADMIN PANEL</p>
     <h2>Control the table.</h2>
     <form id="inline-admin-login" class="inline-admin-login">
       <input id="inline-admin-token" type="password" placeholder="Private admin key" required>
-      <button class="primary-button">Unlock</button>
+      <button class="primary-button">Unlock Admin Panel</button>
     </form>
     <p id="inline-admin-error" class="error"></p>
     <div id="inline-admin-content" class="hidden">
       <div class="inline-admin-stats"><span><b id="inline-room-total">0</b> rooms</span><span><b id="inline-player-total">0</b> players</span><span><b id="inline-match-total">0</b> saved matches</span></div>
-      <div class="inline-admin-actions"><button id="inline-admin-refresh">Refresh</button><button id="inline-admin-lock">Lock</button></div>
+      <div class="inline-admin-actions"><button id="inline-admin-refresh">Refresh</button><button id="inline-reset-leaderboard" class="danger">Reset leaderboard</button><button id="inline-admin-lock">Lock Admin</button></div>
       <div id="inline-admin-rooms" class="inline-admin-rooms"></div>
     </div>
   </dialog>
@@ -307,6 +328,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=40"></script>
+  <script src="/app.js?v=311"></script>
 </body>
 </html>

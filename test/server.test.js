@@ -13,9 +13,9 @@ process.env.PROFILE_FILE = testProfileFile;
 process.env.RECORDS_FILE = testRecordsFile;
 process.env.ADMIN_TOKEN = 'test-admin-key';
 const {
-  server, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor,
+  server, recordsStore, profiles, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor,
   riskDieOutcome, applySafeRoll, addChatMessage, addReaction, addSpectator,
-  expireTurnIfNeeded, processBotTurn, reconcileWinner, MODES, APP_VERSION
+  expireTurnIfNeeded, processBotTurn, reconcileWinner, battleDieOutcome, MODES, APP_VERSION
 } = require('../server');
 const { readJsonFile, writeJsonFile } = require('../json-store');
 let baseUrl;
@@ -131,6 +131,106 @@ test('Risk Die begins half skulls, grows deadlier, and has five reward faces', (
   assert.deepEqual(riskDieOutcome(room, () => values.shift()).reward, 30);
   room.rollStreak = 4;
   assert.deepEqual(riskDieFor(room), { percent: 58, skullFaces: 7, rewardFaces: 5, penalty: 5 });
+  rooms.delete(room.code);
+});
+
+test('Battle Dice has distinct normal, skull, and high-reward outcomes', () => {
+  const { room } = createRoom('Ada');
+  assert.deepEqual(battleDieOutcome(room, 'roll', () => 1), { dieKind: 'normal', busted: true, face: 1, damage: 0, selfDamage: 5 });
+  assert.deepEqual(battleDieOutcome(room, 'roll', () => 6), { dieKind: 'normal', busted: false, face: 6, damage: 6, selfDamage: 0 });
+  const values = [5, 4];
+  const risk = battleDieOutcome(room, 'risk_die', () => values.shift());
+  assert.equal(risk.busted, false);
+  assert.equal(risk.damage, 30);
+  assert.equal(risk.dieKind, 'risk');
+  rooms.delete(room.code);
+});
+
+test('Battle Dice starts everyone at 30 health and crowns the last player standing', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'balanced');
+  const rival = room.players[1];
+  action(room, player.id, 'set_mode', 'battle');
+  action(room, player.id, 'ready');
+  action(room, player.id, 'start');
+  assert.deepEqual(room.players.map(candidate => candidate.score), [30, 30]);
+  assert.equal(publicState(room, player.id).gameSystem, 'battle');
+  adminAction(room, 'score', { playerId: rival.id, delta: -30 });
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
+  rooms.delete(room.code);
+});
+
+test('Battle Dice attacks, advances after one roll, skips knocked-out seats, and finishes', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'balanced');
+  action(room, player.id, 'add_bot', 'bold');
+  action(room, player.id, 'set_mode', 'battle');
+  action(room, player.id, 'ready');
+  action(room, player.id, 'start');
+  room.turnIndex = 0;
+
+  const firstRival = room.players[1];
+  const secondRival = room.players[2];
+  action(room, player.id, 'roll', null, () => 6);
+  assert.equal(firstRival.score, 24);
+  assert.equal(room.turnIndex, 1);
+  assert.equal(room.lastOutcome.damage, 6);
+
+  const deadlyValues = [5, 4];
+  action(room, firstRival.id, 'risk_die', null, () => deadlyValues.shift());
+  assert.equal(secondRival.score, 0);
+  assert.equal(room.turnIndex, 0);
+  assert.equal(room.lastOutcome.dieKind, 'risk');
+  assert.equal(room.lastOutcome.damage, 30);
+
+  const finishingValues = [5, 4];
+  action(room, player.id, 'risk_die', null, () => finishingValues.shift());
+  assert.equal(firstRival.score, -6);
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
+  rooms.delete(room.code);
+});
+
+test('Battle admin score changes advance past eliminated current players', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'balanced');
+  action(room, player.id, 'add_bot', 'bold');
+  action(room, player.id, 'set_mode', 'battle');
+  action(room, player.id, 'ready');
+  action(room, player.id, 'start');
+  room.turnIndex = 0;
+
+  adminAction(room, 'score', { playerId: player.id, delta: -30 });
+  assert.equal(player.score, 0);
+  assert.notEqual(room.turnIndex, 0);
+  room.turnIndex = 0;
+  assert.throws(() => action(room, player.id, 'roll', null, () => 6), /knocked out/);
+  rooms.delete(room.code);
+});
+
+test('removing a Battle rival immediately crowns the only standing player', () => {
+  const { room, player } = createRoom('Falcon');
+  action(room, player.id, 'add_bot', 'balanced');
+  action(room, player.id, 'add_bot', 'bold');
+  action(room, player.id, 'set_mode', 'battle');
+  action(room, player.id, 'ready');
+  action(room, player.id, 'start');
+  room.players[1].score = 0;
+  const standingRival = room.players[2];
+
+  adminAction(room, 'remove_player', { playerId: standingRival.id });
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.winnerId, player.id);
+  rooms.delete(room.code);
+});
+
+test('hidden legacy double-roll action is rejected', () => {
+  const { room, player } = createRoom('Falcon');
+  room.players.push({ id: 'second', name: 'Lin', score: 0, joinedAt: Date.now() });
+  room.phase = 'playing';
+  room.turnIndex = 0;
+  assert.throws(() => action(room, player.id, 'double'), /Unknown action/);
   rooms.delete(room.code);
 });
 
@@ -383,15 +483,15 @@ test('private admin HTTP routes stay hidden unless explicitly enabled', async ()
   assert.equal(response.status, 404);
 });
 
-test('health identifies the V4 JSON server', async () => {
+test('health identifies the V3.1 JSON server', async () => {
   const response = await request('/api/health', null, 'GET');
   assert.equal(response.status, 200);
   assert.deepEqual(response.data, { ok: true, rooms: rooms.size, storage: 'json', version: APP_VERSION });
-  assert.equal(APP_VERSION, '4.0.0');
+  assert.equal(APP_VERSION, '3.1.0');
 });
 
 test('every built-in game mode starts with a 10-second turn', () => {
-  assert.deepEqual(Object.values(MODES).map(mode => mode.turnMs), [10000, 10000, 10000, 10000]);
+  assert.deepEqual(Object.values(MODES).map(mode => mode.turnMs), [10000, 10000, 10000, 10000, 10000]);
 });
 
 test('public leaderboard ranks profiles without exposing identity secrets', async () => {
@@ -563,4 +663,15 @@ test('winner reconciliation repairs an over-target room exactly once', () => {
   assert.equal(reconcileWinner(room), false);
   assert.equal(player.career.wins, 1);
   rooms.delete(room.code);
+});
+
+test('admin leaderboard reset keeps profiles but clears competitive records', async () => {
+  const before = await profiles.leaderboard(50);
+  assert.ok(before.length > 0);
+  await profiles.resetLeaderboard();
+  await recordsStore.reset();
+  const after = await profiles.leaderboard(50);
+  assert.equal(after.length, before.length);
+  assert.equal(after.every(entry => entry.games === 0 && entry.wins === 0 && entry.totalBanked === 0 && entry.xp === 0), true);
+  assert.equal((await recordsStore.records()).summary.matches, 0);
 });

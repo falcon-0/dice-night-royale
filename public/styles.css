@@ -425,22 +425,107 @@ dialog strong { color: var(--ink); }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 
-/* Dice Night Royale V4 */
+/* V3.1 dual-dice table and second game system */
+.game-system-picker { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(190px,.75fr); gap: 10px; width: min(650px,100%); margin: 18px auto 12px; text-align: left; }
+.game-family { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: rgba(0,0,0,.15); }
+.game-family-head { display: flex; align-items: center; gap: 10px; }
+.game-family-head > span, .battle-family > span { flex: 0 0 auto; padding: 4px 6px; border-radius: 5px; color: var(--night); background: var(--lime); font-size: .55rem; font-weight: 900; letter-spacing: .1em; }
+.game-family-head div, .battle-family div { display: grid; gap: 2px; }
+.game-family-head b, .battle-family b { font-size: .82rem; }
+.game-family-head small, .battle-family small { color: var(--muted); font-size: .62rem; line-height: 1.35; }
+.game-family .mode-picker { width: 100%; margin: 10px 0 0; }
+.battle-family { position: relative; display: grid; align-content: center; gap: 10px; color: var(--ink); text-align: left; background: radial-gradient(circle at 90% 10%,rgba(255,143,121,.16),transparent 8rem),rgba(20,13,12,.68); }
+.battle-family > strong { color: var(--danger); font-size: .58rem; letter-spacing: .13em; }
+.battle-family.active { border-color: var(--danger); box-shadow: 0 0 0 2px rgba(255,143,121,.16),0 14px 32px rgba(0,0,0,.22); }
+.battle-family.active > span { background: var(--danger); }
+
+#play-panel { width: min(590px,100%); }
+.active-game-label { width: fit-content; margin: 0 auto 10px; padding: 4px 8px; border: 1px solid rgba(199,240,106,.3); border-radius: 99px; color: var(--lime); background: rgba(199,240,106,.07); font-size: .58rem; font-weight: 900; letter-spacing: .12em; }
+.dice-choices { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 0 auto 12px; }
+.die-choice { display: grid; grid-template-columns: 82px minmax(0,1fr); align-items: center; gap: 12px; min-height: 112px; padding: 12px; border: 1px solid var(--line); border-radius: 15px; color: var(--ink); text-align: left; touch-action: manipulation; transition: transform .18s,border-color .18s,background .18s; }
+.die-choice:not(:disabled):hover { transform: translateY(-3px); }
+.die-choice:disabled { cursor: not-allowed; opacity: .56; }
+.normal-die-choice { background: rgba(246,242,231,.07); }
+.normal-die-choice:not(:disabled):hover { border-color: var(--lime); background: rgba(199,240,106,.09); }
+.deadly-die-choice { border-color: rgba(255,208,116,.32); background: linear-gradient(145deg,rgba(255,208,116,.08),rgba(30,8,7,.32)); }
+.deadly-die-choice:not(:disabled):hover { border-color: var(--danger); background: rgba(255,143,121,.1); }
+.choice-die { position: relative; display: grid; width: 76px; height: 76px; place-items: center; border-radius: 17px; }
+.normal-die-face { background: #f6f2e7; box-shadow: inset -6px -7px 0 #ded8c8,0 10px 22px rgba(0,0,0,.32); transform: rotate(-3deg); }
+.normal-die-face .pip { width: 12px; height: 12px; margin: -6px; }
+.risk-die-face { color: var(--gold); background: radial-gradient(circle at 35% 30%,#49342b,#160e0d 68%); border: 2px solid rgba(255,208,116,.48); box-shadow: inset -7px -8px 12px rgba(0,0,0,.48),0 10px 24px rgba(0,0,0,.42); font: 900 1.7rem "Fraunces",serif; transform: rotate(3deg); }
+.choice-die.is-result { box-shadow: 0 0 0 3px rgba(199,240,106,.2),0 12px 28px rgba(0,0,0,.4); }
+.risk-die-face.is-result { color: #fff4d6; border-color: var(--danger); box-shadow: 0 0 0 3px rgba(255,143,121,.18),0 12px 28px rgba(0,0,0,.45); }
+.choice-die.rolling { animation: roll .42s cubic-bezier(.2,.7,.3,1); }
+.die-choice-copy { display: grid; min-width: 0; gap: 5px; }
+.die-choice-copy b { font: 800 1rem "Fraunces",serif; line-height: 1.05; }
+.die-choice-copy small { color: #dce2dc; font-size: .72rem; line-height: 1.25; }
+.die-choice-copy em { color: var(--muted); font-size: .68rem; font-style: normal; font-weight: 700; }
+.deadly-die-choice .die-choice-copy em { color: #ffb6a7; }
+.dice-result-status { min-height: 20px; margin: 0 0 10px; color: var(--gold); font-size: .75rem; font-weight: 800; }
+.secondary-actions { grid-template-columns: 1fr 1.2fr; width: min(440px,100%); margin: 0 auto; }
+.secondary-actions .freeze-button { grid-column: auto; min-height: 44px; }
+.battle-help { width: min(510px,100%); margin: 0 auto 12px; padding: 9px 11px; border: 1px solid rgba(255,143,121,.22); border-radius: 9px; color: #f1c3b9; background: rgba(255,143,121,.07); font-size: .72rem; line-height: 1.4; }
+#play-panel[data-game-system="battle"] .active-game-label { color: var(--danger); border-color: rgba(255,143,121,.35); background: rgba(255,143,121,.08); }
+.player-card.eliminated { opacity: .48; filter: grayscale(.65); }
+.player-card.eliminated .player-score strong { text-decoration: line-through; }
+.inline-admin-actions .danger { color: var(--danger); border-color: rgba(255,143,121,.3); }
+
+@media (min-width: 1000px) {
+  .table-wrap { max-width: 900px; }
+  .game-table { min-height: 520px; padding: 52px; }
+}
+
+@media (max-width: 760px) {
+  .game-system-picker { grid-template-columns: 1fr 1fr; }
+  .game-table { min-height: 0; padding: 28px 15px; border-width: 6px; border-radius: 26px; }
+  #play-panel { width: min(520px,100%); }
+  .die-choice { grid-template-columns: 64px minmax(0,1fr); gap: 9px; min-height: 100px; padding: 10px; }
+  .choice-die { width: 60px; height: 60px; border-radius: 14px; }
+  .normal-die-face .pip { width: 10px; height: 10px; margin: -5px; }
+  .die-choice-copy b { font-size: .86rem; }
+  .top-actions .falcon-control { order: -2; }
+}
+
+@media (max-width: 480px) {
+  main { width: 100%; }
+  .screen { width: min(100% - 16px,1160px); }
+  .game-system-picker { grid-template-columns: 1fr; }
+  .game-family { padding: 10px; }
+  .mode-picker { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .room-strip { gap: 8px; }
+  .room-actions { width: 100%; justify-content: flex-start; }
+  .room-actions .copy-button { min-height: 44px; }
+  .dice-choices { gap: 7px; }
+  .die-choice { display: flex; min-height: 126px; padding: 9px 7px; flex-direction: column; justify-content: center; gap: 7px; text-align: center; }
+  .choice-die { width: 56px; height: 56px; }
+  .die-choice-copy { gap: 3px; }
+  .die-choice-copy b { font-size: .78rem; }
+  .die-choice-copy small, .die-choice-copy em { font-size: .66rem; }
+  .secondary-actions { position: sticky; z-index: 4; bottom: max(8px,env(safe-area-inset-bottom)); padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: rgba(11,35,27,.92); backdrop-filter: blur(12px); }
+  .reaction-bar { flex-wrap: wrap; }
+}
+
+@media (max-width: 350px) {
+  .dice-choices { grid-template-columns: 1fr; }
+  .die-choice { min-height: 88px; flex-direction: row; text-align: left; }
+}
+
+/* Dice Night Royale V3.1 */
 .royale-intro { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; overflow: hidden; padding: 30px; color: var(--ink); background: radial-gradient(circle at 68% 42%, rgba(38,104,76,.46), transparent 30rem), radial-gradient(circle at 18% 75%, rgba(199,240,106,.08), transparent 28rem), #08110e; transition: opacity .65s ease, visibility .65s ease; }
 .royale-intro.leaving { opacity: 0; visibility: hidden; pointer-events: none; }
-.intro-content { position: relative; z-index: 3; width: min(870px, 100%); text-align: center; animation: intro-rise .9s .15s both; }
+.intro-content { position: relative; z-index: 3; width: 100%; max-width: min(870px, calc(100vw - 44px)); min-width: 0; text-align: center; animation: intro-rise .9s .15s both; }
 .intro-content > p { margin: 0 0 14px; color: var(--lime); font-size: .69rem; font-weight: 800; letter-spacing: .24em; }
 .intro-logo { color: var(--ink); font-size: .83rem; font-weight: 800; letter-spacing: .18em; }
 .intro-logo span { display: inline-block; margin-left: 7px; padding: 4px 7px; border: 1px solid rgba(255,208,116,.6); border-radius: 4px; color: var(--gold); font-size: .57rem; vertical-align: 2px; }
 .royale-intro h1 { margin: 24px 0 0; font-size: clamp(4.4rem, 9.5vw, 8.5rem); line-height: .84; }
 .royale-intro h1 em { display: inline-block; text-shadow: 0 0 55px rgba(199,240,106,.14); }
-.intro-features { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 32px 0 24px; }
+.intro-features { display: flex; width: 100%; min-width: 0; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 32px 0 24px; }
 .intro-features span { padding: 7px 11px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: rgba(255,255,255,.035); font-size: .65rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .intro-actions { display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .intro-actions .primary-button { width: min(310px, 100%); }
 .intro-actions .text-button { color: var(--muted); font-size: .76rem; }
 .intro-actions .text-button:hover { color: var(--ink); }
-.intro-admin { position: absolute; z-index: 3; bottom: 27px; color: var(--gold); font-size: .59rem; font-weight: 800; letter-spacing: .16em; }
+.intro-admin { position: absolute; left: 50%; z-index: 3; bottom: 27px; width: max-content; max-width: calc(100vw - 32px); color: var(--gold); font-size: .59rem; font-weight: 800; letter-spacing: .16em; text-align: center; transform: translateX(-50%); }
 .intro-die { position: absolute; right: 8%; top: 17%; width: 140px; height: 140px; border-radius: 27px; background: linear-gradient(145deg,#fffdf4,#c9cbbf); box-shadow: -20px 28px 50px rgba(0,0,0,.5), inset -7px -10px 14px rgba(18,46,35,.15), 0 0 65px rgba(199,240,106,.12); transform: rotate(17deg); animation: intro-float 4s ease-in-out infinite; }
 .intro-die i { position: absolute; width: 17px; height: 17px; border-radius: 50%; background: #123f31; box-shadow: inset 0 2px 4px rgba(0,0,0,.35); }
 .intro-die i:nth-child(1){left:24px;top:24px}.intro-die i:nth-child(2){right:24px;top:24px}.intro-die i:nth-child(3){left:50%;top:50%;transform:translate(-50%,-50%)}.intro-die i:nth-child(4){left:24px;bottom:24px}.intro-die i:nth-child(5){right:24px;bottom:24px}
@@ -520,7 +605,7 @@ dialog strong { color: var(--ink); }
 
 @media (max-width: 600px) {
   .royale-intro { padding: 22px; }
-  .royale-intro h1 { font-size: clamp(3.4rem, 18vw, 5.1rem); }
+  .royale-intro h1 { font-size: clamp(2.75rem, 14vw, 5.1rem); }
   .intro-die { right: -35px; top: 12%; width: 92px; height: 92px; border-radius: 19px; opacity: .68; }
   .intro-die i { width: 11px; height: 11px; }
   .intro-die i:nth-child(1){left:16px;top:16px}.intro-die i:nth-child(2){right:16px;top:16px}.intro-die i:nth-child(4){left:16px;bottom:16px}.intro-die i:nth-child(5){right:16px;bottom:16px}
@@ -540,7 +625,7 @@ dialog strong { color: var(--ink); }
   .room-actions .copy-button { font-size: .68rem; }
 }
 
-/* Dice Night Royale V4 */
+/* Dice Night Royale V3.1 */
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   outline: 3px solid rgba(199,240,106,.8);
   outline-offset: 3px;

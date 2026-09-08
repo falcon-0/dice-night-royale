@@ -121,6 +121,11 @@ class LocalRecordStore {
     };
   }
 
+  async reset() {
+    this.matches = [];
+    this.persist();
+  }
+
   async close() {}
 }
 

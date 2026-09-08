@@ -245,7 +245,7 @@ async function poll() {
     const { room } = await api(`/api/rooms/${state.code}?playerId=${encodeURIComponent(state.playerId)}`, { headers: { Authorization: `Bearer ${state.sessionToken}` } });
     if (!state.room || room.version !== state.room.version) {
       const oldMessage = state.room?.message;
-      const rolled = oldMessage !== room.message && room.message.includes('rolled');
+      const rolled = oldMessage !== room.message && /(rolled| hit .* for \d+ damage)/i.test(room.message);
       state.room = room;
       render(room, rolled);
       if (oldMessage !== room.message) {
@@ -268,19 +268,24 @@ function playerCard(player, index, room) {
   const displayName = admin ? 'FALCON' : player.name;
   const bot = Boolean(player.isBot);
   const showdown = room.mode?.id === 'showdown';
+  const battle = room.mode?.id === 'battle';
   const roundLimit = room.showdown?.turnLimit || 5;
   const progress = showdown
     ? Math.max(0, Math.min(100, (Number(player.turnsTaken || 0) / roundLimit) * 100))
+    : battle
+    ? Math.max(0, Math.min(100, (Number(player.score) / 30) * 100))
     : Math.max(0, Math.min(100, (player.score / Math.max(1, room.targetScore || room.mode?.targetScore || 100)) * 100));
   const canRemoveBot = bot && room.phase === 'lobby' && room.meId === room.hostId;
   const status = room.phase === 'lobby'
     ? (player.ready ? 'READY' : 'WAITING')
+    : battle
+      ? `${player.score} health${player.score <= 0 ? ', knocked out' : ''}`
     : showdown
       ? `${player.score} points, ${player.turnsTaken || 0} of ${roundLimit} turns complete`
       : `${player.score} of ${room.targetScore || room.mode?.targetScore || 100} points`;
-  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${bot ? 'bot' : ''} ${player.ready ? 'ready' : ''}" ${active ? 'aria-current="true"' : ''} aria-label="${escapeHtml(displayName)}, ${escapeHtml(status)}${active ? ', current turn' : ''}">
+  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${bot ? 'bot' : ''} ${player.ready ? 'ready' : ''} ${battle && player.score <= 0 ? 'eliminated' : ''}" ${active ? 'aria-current="true"' : ''} aria-label="${escapeHtml(displayName)}, ${escapeHtml(status)}${active ? ', current turn' : ''}">
     <div class="player-top"><span class="avatar">${admin ? '♛' : bot ? '⚙' : escapeHtml(player.name[0].toUpperCase())}</span><span class="player-name">${escapeHtml(displayName)}</span>${admin ? '<span class="admin-badge">ADMIN</span>' : ''}${bot ? `<span class="bot-badge">${escapeHtml((player.botStyle || 'BOT').toUpperCase())}</span>` : ''}${player.id === room.meId ? '<span class="you">YOU</span>' : ''}<span class="player-perks" title="${player.frozen ? 'Next turn frozen' : player.shieldAvailable ? 'Safety Net available' : ''}">${player.frozen ? '❄' : player.shieldAvailable ? '◈' : ''}</span></div>
-    <div class="player-score"><strong>${player.score}</strong><span>${room.phase === 'lobby' ? player.ready ? 'READY' : 'WAITING' : showdown ? `${player.turnsTaken || 0}/${roundLimit} TURNS` : `/ ${room.targetScore || room.mode?.targetScore || 100}`}</span></div>
+    <div class="player-score"><strong>${player.score}</strong><span>${room.phase === 'lobby' ? player.ready ? 'READY' : 'WAITING' : battle ? 'HEALTH' : showdown ? `${player.turnsTaken || 0}/${roundLimit} TURNS` : `/ ${room.targetScore || room.mode?.targetScore || 100}`}</span></div>
     ${room.phase !== 'lobby' ? `<div class="player-progress" aria-hidden="true"><span style="width:${progress}%"></span></div>` : ''}
     ${active ? '<span class="current-turn">CURRENT TURN</span>' : ''}
     ${canRemoveBot ? `<button class="bot-card-action" type="button" data-remove-bot="${escapeHtml(player.id)}" aria-label="Remove ${escapeHtml(displayName)}">Remove bot</button>` : ''}
@@ -295,16 +300,31 @@ function displayName(person, room = state.room) {
   return person?.id === room?.hostId ? 'FALCON' : person?.name || 'Unknown player';
 }
 
-function renderDice(value, animate = false) {
-  const dice = $('#dice');
-  const shown = value || 1;
-  dice.innerHTML = pipMap[shown].map(position => `<span class="pip ${position}"></span>`).join('');
-  dice.setAttribute('aria-label', value ? `Rolled ${value}` : 'Ready to roll');
-  dice.style.opacity = value ? '1' : '.45';
+function renderDice(room, animate = false) {
+  const normal = $('#normal-die-face');
+  const risk = $('#risk-die-face');
+  const outcome = room.lastOutcome || (room.lastRoll ? {
+    dieKind: room.lastRollKind === 'risk' ? 'risk' : 'normal',
+    busted: room.lastRoll === 1,
+    face: room.lastRoll,
+    damage: room.lastReward || null
+  } : null);
+  const normalValue = outcome?.dieKind === 'normal' && Number(outcome.face) >= 1 ? Number(outcome.face) : 5;
+  normal.innerHTML = pipMap[normalValue].map(position => `<span class="pip ${position}"></span>`).join('');
+  risk.textContent = outcome?.dieKind === 'risk' ? (outcome.busted ? '☠' : `+${outcome.damage || room.lastReward || 0}`) : '☠';
+  normal.classList.toggle('is-result', outcome?.dieKind === 'normal');
+  risk.classList.toggle('is-result', outcome?.dieKind === 'risk');
+  const status = !outcome
+    ? 'Choose either die.'
+    : outcome.dieKind === 'risk'
+    ? outcome.busted ? 'Deadly Risk Die: SKULL!' : `Deadly Risk Die: +${outcome.damage || room.lastReward} ${room.mode?.id === 'battle' ? 'damage' : 'points'}!`
+    : outcome.busted ? 'Normal Die: rolled 1 and busted.' : `Normal Die: rolled ${outcome.face}.`;
+  $('#dice-result-status').textContent = status;
   if (animate) {
-    dice.classList.remove('rolling');
-    void dice.offsetWidth;
-    dice.classList.add('rolling');
+    const die = outcome?.dieKind === 'risk' ? risk : normal;
+    die.classList.remove('rolling');
+    void die.offsetWidth;
+    die.classList.add('rolling');
   }
 }
 
@@ -319,7 +339,9 @@ function render(room, animateRoll = false) {
   const admin = room.players.find(player => player.id === room.hostId);
   const visibleMessage = admin?.name ? room.message.split(admin.name).join('FALCON') : room.message;
   $('#status-message').textContent = visibleMessage;
-  $('#last-action-die').textContent = room.lastRollKind === 'risk' && room.lastReward ? `☠ +${room.lastReward}` : room.lastRoll ? `🎲 ${room.lastRoll}` : room.phase === 'lobby' ? 'READY' : 'PLAY';
+  $('#last-action-die').textContent = room.lastOutcome?.dieKind === 'risk'
+    ? room.lastOutcome.busted ? '☠ SKULL' : `☠ +${room.lastOutcome.damage || room.lastReward}`
+    : room.lastRoll ? `🎲 ${room.lastRoll}` : room.phase === 'lobby' ? 'READY' : 'PLAY';
   $('#game-error').textContent = '';
   renderChat(room);
   renderTimeline(room);
@@ -375,21 +397,33 @@ function render(room, animateRoll = false) {
   if (room.phase === 'playing') {
     const current = room.players[room.turnIndex];
     const myTurn = current.id === room.meId;
-    document.querySelector('.game-actions').classList.toggle('spectating', room.meRole === 'spectator');
+    const battle = room.mode.id === 'battle';
+    const me = room.players.find(player => player.id === room.meId);
+    const canAct = myTurn && (!battle || Number(me?.score) > 0);
+    $('#play-panel').dataset.gameSystem = battle ? 'battle' : 'royale';
+    $('#active-game-label').textContent = battle ? 'GAME 2 · BATTLE DICE' : 'GAME 1 · ROYALE RACE';
     const currentName = displayName(current, room).toUpperCase();
-    $('#turn-label').textContent = room.paused ? 'TABLE PAUSED' : myTurn ? 'YOUR TURN' : room.meRole === 'spectator' ? `WATCHING ${currentName}` : `${currentName}'S TURN`;
+    $('#turn-label').textContent = room.paused ? 'TABLE PAUSED' : myTurn && !canAct ? 'KNOCKED OUT' : myTurn ? 'YOUR TURN' : room.meRole === 'spectator' ? `WATCHING ${currentName}` : `${currentName}'S TURN`;
     $('#turn-score').textContent = room.turnScore;
     $('#risk-percent').textContent = `${room.risk?.percent ?? 16}%`;
     $('#risk-fill').style.width = `${room.risk?.percent ?? 16}%`;
     $('#risk-penalty').textContent = `Roll 1 penalty: −${room.risk?.penalty ?? 5} points`;
+    $('#normal-die-reward').textContent = battle ? 'Hit the next rival for 2–6' : 'Build 2–6 points';
+    $('#normal-die-risk').textContent = battle ? 'Roll 1 · lose 5 health' : `${room.risk?.percent ?? 16}% bust · −${room.risk?.penalty ?? 5} saved`;
     $('#streak-progress').textContent = room.nextBonusIn === 1 ? 'Next safe roll earns +10' : `${room.nextBonusIn ?? 3} rolls to +10 bonus`;
-    $('#roll-button').disabled = room.paused || !myTurn || state.acting;
-    $('#hold-button').disabled = room.paused || !myTurn || room.turnScore < 1 || state.acting;
+    $('#roll-button').disabled = room.paused || !canAct || state.acting;
+    $('#hold-button').disabled = room.paused || !canAct || room.turnScore < 1 || state.acting;
     $('#double-risk').textContent = `${room.riskDieRisk?.percent ?? 50}% bust · ${room.riskDieRisk?.skullFaces ?? 5} skulls`;
-    $('#double-button').disabled = room.paused || !myTurn || room.riskDieUsed || state.acting;
-    const me = room.players.find(player => player.id === room.meId);
-    $('#freeze-button').disabled = room.paused || !myTurn || !me || me.score < 5 || room.freezeUsed || room.players.length < 2 || state.acting;
-    renderDice(room.lastRoll, animateRoll);
+    $('#double-button').disabled = room.paused || !canAct || state.acting;
+    $('#roll-button').setAttribute('aria-label', battle ? 'Roll the Normal Die to attack the next standing rival' : 'Roll the Normal Die');
+    $('#double-button').setAttribute('aria-label', battle ? 'Roll the Deadly Risk Die to attack the next standing rival' : 'Roll the Deadly Risk Die');
+    $('#freeze-button').disabled = room.paused || !canAct || !me || me.score < 5 || (battle && me.score <= 5) || room.freezeUsed || room.players.length < 2 || state.acting;
+    $('#turn-pot-panel').classList.toggle('hidden', battle);
+    $('#normal-risk-panel').classList.toggle('hidden', battle);
+    $('#streak-chip').classList.toggle('hidden', battle);
+    $('#battle-help').classList.toggle('hidden', !battle);
+    $('#hold-button').classList.toggle('hidden', battle);
+    renderDice(room, animateRoll);
   }
 
   if (room.phase === 'finished') {
@@ -407,14 +441,14 @@ function render(room, animateRoll = false) {
     }
     const winnerName = winner.id === room.hostId ? 'FALCON' : winner.name;
     $('#winner-name').textContent = winner.id === room.meId ? 'You won!' : `${winnerName} wins!`;
-    $('#winner-score').textContent = `${winner.score} points — what a run.`;
+    $('#winner-score').textContent = room.mode.id === 'battle' ? `${winner.score} health remaining — last player standing.` : `${winner.score} points — what a run.`;
     const stats = winner.stats || { rolls: 0, busts: 0, bestBank: 0 };
     $('#winner-stats').textContent = `${stats.rolls} rolls · ${stats.busts} busts · ${stats.bestBank} biggest bank`;
     $('#awards').innerHTML = (room.awards || []).map(award => {
       const owner = room.players.find(player => player.id === award.playerId);
       return `<article><span>${award.icon}</span><div><b>${escapeHtml(award.title)}</b><strong>${escapeHtml(owner?.id === room.hostId ? 'FALCON' : owner?.name || '')}</strong><small>${escapeHtml(award.value)}</small></div></article>`;
     }).join('');
-    $('#room-records').innerHTML = `<h3>Final standings</h3>${[...room.players].sort((a, b) => b.score - a.score).map((player, index) => `<p><b>#${index + 1} ${escapeHtml(player.id === room.hostId ? 'FALCON' : player.name)}</b><span>${player.score} points · ${player.stats?.rolls || 0} rolls · ${player.stats?.busts || 0} busts</span></p>`).join('')}`;
+    $('#room-records').innerHTML = `<h3>Final standings</h3>${[...room.players].sort((a, b) => b.score - a.score).map((player, index) => `<p><b>#${index + 1} ${escapeHtml(player.id === room.hostId ? 'FALCON' : player.name)}</b><span>${player.score} ${room.mode.id === 'battle' ? 'health' : 'points'} · ${player.stats?.rolls || 0} rolls · ${player.stats?.busts || 0} busts</span></p>`).join('')}`;
     const host = room.hostId === room.meId;
     $('#restart-button').classList.toggle('hidden', !host);
     $('#winner-waiting').classList.toggle('hidden', host);
@@ -423,7 +457,7 @@ function render(room, animateRoll = false) {
 }
 
 function renderEventFeed(room) {
-  const icons = { roll: '🎲', double: '×2', risk_die: '☠', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', player_leave: '−', spectator_join: '◉', lobby: '↻', admin: '♛' };
+  const icons = { roll: '🎲', risk_die: '☠', battle_hit: '⚔', battle_bust: '💀', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', player_leave: '−', spectator_join: '◉', lobby: '↻', admin: '♛' };
   const roomHost = room.players.find(player => player.id === room.hostId);
   const events = [...(room.events || [])].slice(-3).reverse();
   $('#event-feed').innerHTML = events.length ? events.map(item => {
@@ -434,7 +468,7 @@ function renderEventFeed(room) {
 }
 
 function renderTimeline(room) {
-  const icons = { roll: '🎲', double: '×2', risk_die: '☠', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', spectator_join: '◉', lobby: '↻', admin: '♛' };
+  const icons = { roll: '🎲', risk_die: '☠', battle_hit: '⚔', battle_bust: '💀', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', spectator_join: '◉', lobby: '↻', admin: '♛' };
   const events = [...(room.events || [])].reverse();
   const roomHost = room.players.find(player => player.id === room.hostId);
   $('#timeline-events').innerHTML = events.length ? events.map(item => {
@@ -533,17 +567,17 @@ setInterval(updateTurnTimer, 100);
 async function doAction(type, targetId) {
   if (state.acting) return;
   state.acting = true;
-  if (type === 'roll' || type === 'double' || type === 'risk_die') playSound('roll');
+  if (type === 'roll' || type === 'risk_die') playSound('roll');
   if (state.room) render(state.room);
   try {
     const { room } = await api(`/api/rooms/${state.code}/action`, {
       method: 'POST', body: JSON.stringify({ playerId: state.playerId, sessionToken: state.sessionToken, type, targetId })
     });
-    const animate = type === 'roll' || type === 'double' || type === 'risk_die';
+    const animate = type === 'roll' || type === 'risk_die';
     state.room = room;
     state.acting = false;
     render(room, animate);
-    if (type === 'roll' || type === 'double' || type === 'risk_die') playSound(room.lastRoll === 1 ? 'bust' : 'safe');
+    if (type === 'roll' || type === 'risk_die') playSound(room.lastOutcome?.busted ? 'bust' : 'safe');
     if (type === 'hold' && room.phase !== 'finished') playSound('bank');
     if (type === 'freeze') playSound('bank');
   } catch (error) {
@@ -599,7 +633,7 @@ $('#roll-button').addEventListener('click', () => doAction('roll'));
 $('#hold-button').addEventListener('click', () => doAction('hold'));
 $('#double-button').addEventListener('click', () => doAction('risk_die'));
 $('#freeze-button').addEventListener('click', () => {
-  const targets = state.room.players.filter(player => player.id !== state.playerId);
+  const targets = state.room.players.filter(player => player.id !== state.playerId && (state.room.mode.id !== 'battle' || player.score > 0));
   $('#freeze-targets').innerHTML = targets.map(player => `<button data-player-id="${escapeHtml(player.id)}" ${player.frozen ? 'disabled' : ''}>❄ ${escapeHtml(player.id === state.room.hostId ? 'FALCON' : player.name)}${player.frozen ? ' · already frozen' : ''}</button>`).join('');
   $('#freeze-dialog').showModal();
 });
@@ -691,7 +725,7 @@ async function inlineAdminApi(url, options = {}) {
 function inlineAdminRoom(room) {
   const mainAction = room.phase === 'playing' ? (room.paused ? 'resume' : 'pause') : room.phase === 'finished' ? 'reset' : 'force_start';
   const players = room.players.map(player => `<div class="inline-room-tools"><b>${escapeHtml(player.name)}${player.isBot ? ' · BOT' : ''}</b><span>${player.score} pts</span><button data-score="-5" data-player="${player.id}">-5</button><button data-score="5" data-player="${player.id}">+5</button>${player.id === room.hostId ? '' : `<button class="danger" data-remove="${player.id}">Remove</button>`}</div>`).join('');
-  const lobbyTools = room.phase === 'lobby' ? `<select data-inline-mode aria-label="Game type">${['classic','blitz','marathon','showdown'].map(mode => `<option value="${mode}" ${room.mode?.id === mode ? 'selected' : ''}>${mode.replace('showdown', 'five-round showdown')}</option>`).join('')}</select><select data-admin-bot-style aria-label="Practice bot style"><option value="careful">Careful bot</option><option value="balanced" selected>Balanced bot</option><option value="bold">Bold bot</option></select><button data-admin-action="add_bot">Add bot</button>` : '';
+  const lobbyTools = room.phase === 'lobby' ? `<select data-inline-mode aria-label="Game type">${['classic','blitz','marathon','showdown','battle'].map(mode => `<option value="${mode}" ${room.mode?.id === mode ? 'selected' : ''}>${mode.replace('showdown', 'five-round showdown').replace('battle', 'battle dice')}</option>`).join('')}</select><select data-admin-bot-style aria-label="Practice bot style"><option value="careful">Careful bot</option><option value="balanced" selected>Balanced bot</option><option value="bold">Bold bot</option></select><button data-admin-action="add_bot">Add bot</button>` : '';
   return `<article class="inline-admin-room" data-admin-room="${room.code}"><header><div><b>${room.code}</b> · ${room.phase}${room.paused ? ' · paused' : ''}</div><span>${room.players.length}/9</span></header>${players}<div class="inline-room-tools"><button data-admin-action="${mainAction}">${mainAction.replace('_', ' ')}</button>${lobbyTools}<select data-admin-timer>${[5,10,15,20,30,45,60].map(value => `<option value="${value}" ${room.turnDurationMs === value * 1000 ? 'selected' : ''}>${value} sec</option>`).join('')}</select><button data-admin-action="clear_chat">Clear chat</button><button data-admin-action="reset">Reset</button><button class="danger" data-admin-action="close">Close room</button></div></article>`;
 }
 
@@ -729,6 +763,14 @@ $('#inline-admin-login').addEventListener('submit', async event => {
   } catch (error) { $('#inline-admin-error').textContent = 'That admin key did not work.'; }
 });
 $('#inline-admin-refresh').addEventListener('click', () => refreshInlineAdmin().catch(error => { $('#inline-admin-error').textContent = error.message; }));
+$('#inline-reset-leaderboard').addEventListener('click', async () => {
+  if (!confirm('Reset every leaderboard score and saved match record? Player logins will stay active.')) return;
+  try {
+    await inlineAdminApi('/api/admin/leaderboard/reset', { method: 'POST', body: '{}' });
+    await refreshInlineAdmin();
+    showToast('Leaderboard and match records reset');
+  } catch (error) { $('#inline-admin-error').textContent = error.message; }
+});
 $('#inline-admin-lock').addEventListener('click', () => {
   inlineAdminToken = '';
   sessionStorage.removeItem('dice-night-admin');
@@ -827,7 +869,7 @@ function dismissRoyaleIntro() {
   setIntroInert(false);
   $('#name-input').focus();
   intro.setAttribute('aria-hidden', 'true');
-  try { sessionStorage.setItem('dice-night:intro-v4', 'seen'); } catch { /* Session storage is optional. */ }
+  try { sessionStorage.setItem('dice-night:intro-v31', 'seen'); } catch { /* Session storage is optional. */ }
   playSound('bank');
 }
 
@@ -837,7 +879,7 @@ function setIntroInert(active) {
 
 let introVisible = true;
 try {
-  if (sessionStorage.getItem('dice-night:intro-v4') === 'seen') {
+  if (sessionStorage.getItem('dice-night:intro-v31') === 'seen') {
     $('#royale-intro').classList.add('leaving');
     $('#royale-intro').setAttribute('aria-hidden', 'true');
     introVisible = false;

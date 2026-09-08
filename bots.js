@@ -33,6 +33,10 @@ function chooseBotAction(room, bot, random = Math.random) {
   const leader = leadingOpponent(room, bot);
   const target = room.mode === 'showdown' ? null : room.targetScore;
 
+  if (room.mode === 'battle') {
+    return { type: random() < Math.min(.55, .1 + style.riskDieChance * 3) ? 'risk_die' : 'roll' };
+  }
+
   if (room.turnScore > 0 && target && bot.score + room.turnScore >= target) {
     return { type: 'hold' };
   }
@@ -48,7 +52,7 @@ function chooseBotAction(room, bot, random = Math.random) {
     return { type: 'hold' };
   }
 
-  if (room.turnScore === 0 && !room.doubleUsed && random() < style.riskDieChance) {
+  if (room.turnScore === 0 && random() < style.riskDieChance) {
     return { type: 'risk_die' };
   }
 
