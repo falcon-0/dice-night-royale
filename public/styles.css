@@ -237,20 +237,28 @@ input:focus { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(199, 240, 10
     linear-gradient(145deg, rgba(38,29,12,.98), rgba(17,31,25,.98)) padding-box,
     linear-gradient(120deg, #8f6327, #ffe6a6 38%, #c7f06a 58%, #8f6327) border-box;
   box-shadow: 0 12px 28px rgba(0,0,0,.26), 0 0 24px rgba(255,208,116,.13), inset 0 0 26px rgba(255,208,116,.055);
-  animation: falcon-card-aura 3.2s ease-in-out infinite;
+  animation: falcon-card-aura 9s ease-in-out infinite;
 }
 .player-card.admin > * { position: relative; z-index: 2; }
-.player-card.admin::before { content: '♛'; position: absolute; z-index: 0; right: 5px; bottom: -25px; color: rgba(255,224,158,.075); font: 800 6.7rem "Fraunces",serif; line-height: 1; transform: rotate(-10deg); pointer-events: none; }
+.player-card.admin::before { content: ''; position: absolute; z-index: 0; inset: 0; border: 1px solid rgba(139,225,255,.88); border-radius: inherit; background: linear-gradient(145deg,rgba(22,76,111,.76),rgba(8,28,47,.72)); box-shadow: inset 0 1px 0 rgba(228,250,255,.34),inset 0 0 30px rgba(89,199,255,.12); opacity: 0; animation: falcon-blue-glass 9s ease-in-out infinite; pointer-events: none; backdrop-filter: blur(14px) saturate(1.35); }
 .player-card.admin::after { content: ''; position: absolute; z-index: 1; inset: -90% -45%; background: linear-gradient(103deg, transparent 43%, rgba(255,246,211,.2) 50%, transparent 57%); animation: admin-shine 4.2s ease-in-out infinite; pointer-events: none; }
 .player-card.admin.active { border-color: transparent; background: linear-gradient(145deg,rgba(54,40,14,.98),rgba(22,49,36,.98)) padding-box,linear-gradient(120deg,#ffd074,#c7f06a 55%,#ffd074) border-box; }
+.falcon-watermark { position: absolute !important; z-index: 1 !important; right: 5px; bottom: -25px; color: rgba(255,224,158,.075); font: 800 6.7rem "Fraunces",serif; line-height: 1; transform: rotate(-10deg); animation: falcon-watermark-swap 9s ease-in-out infinite; pointer-events: none; }
 .player-card.admin .player-top { padding-bottom: 6px; border-bottom: 1px solid rgba(255,224,158,.13); }
-.player-card.admin .avatar { width: 29px; height: 29px; border: 1px solid #fff0bd; border-radius: 9px; color: #1a160b; background: linear-gradient(145deg,#fff0bd,#ffd074 55%,#b88736); box-shadow: 0 0 16px rgba(255,208,116,.42), inset 0 1px 0 rgba(255,255,255,.7); font-size: .9rem; transform: rotate(-5deg); }
-.player-card.admin .player-name { color: #fff0c7; font-family: "Fraunces",serif; font-weight: 800; letter-spacing: .11em; text-shadow: 0 1px 12px rgba(255,208,116,.25); }
-.player-card.admin .player-score strong { color: #ffe4a2; text-shadow: 0 0 16px rgba(255,208,116,.18); }
+.player-card.admin .avatar { width: 29px; height: 29px; border: 1px solid #fff0bd; border-radius: 9px; color: #1a160b; background: linear-gradient(145deg,#fff0bd,#ffd074 55%,#b88736); box-shadow: 0 0 16px rgba(255,208,116,.42), inset 0 1px 0 rgba(255,255,255,.7); font-size: .9rem; transform: rotate(-5deg); animation: falcon-avatar-swap 9s ease-in-out infinite; }
+.player-card.admin .player-name { color: #fff0c7; font-family: "Fraunces",serif; font-weight: 800; letter-spacing: .11em; text-shadow: 0 1px 12px rgba(255,208,116,.25); animation: falcon-ink-swap 9s ease-in-out infinite; }
+.player-card.admin .player-score strong { color: #ffe4a2; text-shadow: 0 0 16px rgba(255,208,116,.18); animation: falcon-ink-swap 9s ease-in-out infinite; }
 .player-card.admin .player-progress span { background: linear-gradient(90deg,#ffd074,#c7f06a); }
-.admin-badge { padding: 3px 6px; border: 1px solid rgba(255,240,189,.65); border-radius: 999px; color: #201708; background: linear-gradient(110deg,#ffd074,#fff0bd); box-shadow: 0 0 12px rgba(255,208,116,.18); font-size: .46rem; font-weight: 900; letter-spacing: .12em; }
+.player-card.admin .player-title.founder-title { animation: falcon-founder-swap 9s ease-in-out infinite; }
+.admin-badge { padding: 3px 6px; border: 1px solid rgba(255,240,189,.65); border-radius: 999px; color: #201708; background: linear-gradient(110deg,#ffd074,#fff0bd); box-shadow: 0 0 12px rgba(255,208,116,.18); font-size: .46rem; font-weight: 900; letter-spacing: .12em; animation: falcon-badge-swap 9s ease-in-out infinite; }
 @keyframes admin-shine { 0%, 62% { transform: translateX(-62%); } 88%, 100% { transform: translateX(62%); } }
-@keyframes falcon-card-aura { 50% { box-shadow: 0 14px 32px rgba(0,0,0,.3), 0 0 31px rgba(255,208,116,.22), inset 0 0 30px rgba(199,240,106,.055); } }
+@keyframes falcon-blue-glass { 0%,38%,100% { opacity: 0; } 50%,88% { opacity: 1; } }
+@keyframes falcon-card-aura { 0%,38%,100% { box-shadow: 0 12px 28px rgba(0,0,0,.26),0 0 24px rgba(255,208,116,.13),inset 0 0 26px rgba(255,208,116,.055); } 50%,88% { box-shadow: 0 14px 34px rgba(0,0,0,.3),0 0 34px rgba(91,203,255,.28),inset 0 0 28px rgba(163,232,255,.1); } }
+@keyframes falcon-avatar-swap { 0%,38%,100% { border-color:#fff0bd; color:#1a160b; background:linear-gradient(145deg,#fff0bd,#ffd074 55%,#b88736); box-shadow:0 0 16px rgba(255,208,116,.42),inset 0 1px 0 rgba(255,255,255,.7); } 50%,88% { border-color:#dff8ff; color:#08243a; background:linear-gradient(145deg,#effcff,#89dcff 55%,#538bff); box-shadow:0 0 18px rgba(99,208,255,.52),inset 0 1px 0 rgba(255,255,255,.82); } }
+@keyframes falcon-ink-swap { 0%,38%,100% { color:#fff0c7; text-shadow:0 1px 12px rgba(255,208,116,.25); } 50%,88% { color:#ddf7ff; text-shadow:0 1px 15px rgba(88,205,255,.4); } }
+@keyframes falcon-badge-swap { 0%,38%,100% { border-color:rgba(255,240,189,.65); color:#201708; background:linear-gradient(110deg,#ffd074,#fff0bd); box-shadow:0 0 12px rgba(255,208,116,.18); } 50%,88% { border-color:rgba(223,248,255,.82); color:#08243a; background:linear-gradient(110deg,#79d9ff,#e8fbff); box-shadow:0 0 15px rgba(91,203,255,.34); } }
+@keyframes falcon-founder-swap { 0%,38%,100% { color:#ffe3a6; border-color:rgba(255,208,116,.55); background:linear-gradient(120deg,rgba(92,60,16,.88),rgba(255,208,116,.18)); } 50%,88% { color:#dff8ff; border-color:rgba(139,225,255,.62); background:linear-gradient(120deg,rgba(18,78,116,.9),rgba(139,225,255,.17)); } }
+@keyframes falcon-watermark-swap { 0%,38%,100% { color:rgba(255,224,158,.075); } 50%,88% { color:rgba(155,229,255,.11); } }
 .player-card.empty { display: grid; place-items: center; color: #66706b; border-style: dashed; font-size: .8rem; }
 .player-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .avatar { flex: 0 0 auto; width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; background: var(--green); color: var(--lime); font-size: .72rem; font-weight: 700; }
