@@ -761,7 +761,7 @@ test('startup profile migration renames ISSA and reserves Founder for FALCON', a
     const falcon = await service.byId('falcon-id');
     const guest = await service.byId('guest-id');
     assert.equal(issa.displayName, 'ISSA');
-    assert.equal(issa.featuredTitle.label, '×3 Dice Night Champion');
+    assert.equal(issa.featuredTitle.label, '×4 Dice Night Champion');
     assert.equal(issa.achievements.some(item => item.key === 'triple_champion'), true);
     assert.equal(falcon.featuredTitle.key, 'founder');
     assert.equal(falcon.achievements.some(item => item.key === 'founder'), true);

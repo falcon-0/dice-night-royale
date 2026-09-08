@@ -737,7 +737,7 @@ $('#chat-form').addEventListener('submit', async event => {
 let inlineAdminToken = sessionStorage.getItem('dice-night-admin') || '';
 const INLINE_ADMIN_TITLES = [
   { value: '', label: 'No featured title' },
-  { value: 'triple_champion', label: '×3 Champion' },
+  { value: 'triple_champion', label: '×4 Champion' },
   { value: 'founder', label: 'Founder' }
 ];
 

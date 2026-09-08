@@ -10,13 +10,13 @@ const REMOVED_PROFILE_NAME = 'ALOYINLEPONSMALLIE';
 
 const PROFILE_TITLES = Object.freeze({
   founder: { label: 'Founder', icon: '♛', variant: 'founder' },
-  triple_champion: { label: '×3 Dice Night Champion', icon: '🏆', variant: 'champion' }
+  triple_champion: { label: '×4 Dice Night Champion', icon: '🏆', variant: 'champion' }
 });
 
 const ACHIEVEMENTS = Object.freeze({
   profile_created: { name: 'First Roll', icon: '🎲', description: 'Create your Dice Night player profile.' },
   founder: { name: 'Founder', icon: '♛', description: 'Founder of Dice Night.' },
-  triple_champion: { name: '×3 Dice Night Champion', icon: '🏆', description: 'Three-time Dice Night champion.' },
+  triple_champion: { name: '×4 Dice Night Champion', icon: '🏆', description: 'Four-time Dice Night champion.' },
   first_match: { name: 'First Night', icon: '🎲', description: 'Complete your first match.' },
   first_win: { name: 'Crowned', icon: '🏆', description: 'Win your first match.' },
   hot_hand: { name: 'Hot Hand', icon: '🔥', description: 'Bank 25 or more points at once.' },
