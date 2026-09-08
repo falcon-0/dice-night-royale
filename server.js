@@ -82,6 +82,7 @@ function loadSavedRooms(saved) {
         room.events ??= [];
         room.chat ??= [];
         room.players.forEach(player => {
+          player.name = cleanName(player.name);
           player.shieldAvailable ??= true;
           player.frozen ??= false;
           player.stats ??= { rolls: 0, busts: 0, bestBank: 0 };
@@ -99,9 +100,11 @@ function loadSavedRooms(saved) {
           player.rejoinCode ??= String(crypto.randomInt(100000, 1000000));
         });
         room.spectators.forEach(spectator => {
+          spectator.name = cleanName(spectator.name);
           spectator.sessionToken ??= crypto.randomBytes(24).toString('base64url');
           spectator.rejoinCode ??= String(crypto.randomInt(100000, 1000000));
         });
+        room.departedPlayers.forEach(player => { player.name = cleanName(player.name); });
         room.turnDeadline = room.phase === 'playing' && !room.paused ? Date.now() + room.turnDurationMs : null;
         rooms.set(room.code, room);
     }
@@ -121,9 +124,49 @@ loadRetiredRooms();
 
 async function initializeStorage() {
   await recordsStore.initialize();
-  await profiles.initialize();
+  const profileMigration = await profiles.initialize();
   let reconciled = false;
+  const removedProfiles = profileMigration?.removedProfiles || [];
+  if (removedProfiles.length) {
+    await recordsStore.removeProfiles(removedProfiles.map(profile => profile.profileId));
+    const removal = removeProfileReferencesFromRooms(removedProfiles);
+    reconciled ||= removal.roomsUpdated > 0 || removal.roomsRetired > 0;
+    if (removal.roomsRetired) persistRetiredRooms();
+  }
+  const renames = new Map((profileMigration?.renamedProfiles || []).map(item => [item.profileId, item]));
+  for (const rename of renames.values()) await recordsStore.renameProfile(rename.profileId, rename.to);
   for (const room of rooms.values()) {
+    const beforeIdentity = JSON.stringify({
+      message: room.message,
+      players: room.players,
+      spectators: room.spectators,
+      departedPlayers: room.departedPlayers,
+      chat: room.chat,
+      events: room.events
+    });
+    for (const person of [...room.players, ...(room.spectators || []), ...(room.departedPlayers || [])]) {
+      const rename = person.profileId ? renames.get(person.profileId) : null;
+      if (rename) person.name = rename.to;
+      if (person.profileId) person.profile = profileSummary(await profiles.byId(person.profileId));
+    }
+    for (const rename of renames.values()) {
+      const replaceName = value => typeof value === 'string' ? value.split(rename.from).join(rename.to) : value;
+      room.message = replaceName(room.message);
+      for (const message of room.chat || []) {
+        if (message.playerId && [...room.players, ...(room.spectators || [])].some(person => person.id === message.playerId && person.profileId === rename.profileId)) message.name = rename.to;
+        message.text = replaceName(message.text);
+      }
+      for (const event of room.events || []) event.text = replaceName(event.text);
+    }
+    const afterIdentity = JSON.stringify({
+      message: room.message,
+      players: room.players,
+      spectators: room.spectators,
+      departedPlayers: room.departedPlayers,
+      chat: room.chat,
+      events: room.events
+    });
+    if (beforeIdentity !== afterIdentity) reconciled = true;
     const before = JSON.stringify({ phase: room.phase, winnerId: room.winnerId, showdownRoundLimit: room.showdownRoundLimit, showdownSuddenDeath: room.showdownSuddenDeath, showdownContenders: room.showdownContenders, eventCount: room.events?.length || 0 });
     const finished = reconcileWinner(room);
     const after = JSON.stringify({ phase: room.phase, winnerId: room.winnerId, showdownRoundLimit: room.showdownRoundLimit, showdownSuddenDeath: room.showdownSuddenDeath, showdownContenders: room.showdownContenders, eventCount: room.events?.length || 0 });
@@ -148,7 +191,7 @@ function roomCode() {
 }
 
 function cleanName(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 18);
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 10);
 }
 
 function cleanMessage(value) {
@@ -190,8 +233,106 @@ function profileSummary(profile) {
   if (!profile) return null;
   return {
     level: profile.level,
+    featuredTitle: profile.featuredTitle || null,
     achievements: (profile.achievements || []).slice(-3).map(item => ({ key: item.key, name: item.name, icon: item.icon }))
   };
+}
+
+function profileReferenceInEvent(event, playerIds) {
+  const details = event?.details || {};
+  return playerIds.has(details.actorId)
+    || playerIds.has(details.targetId)
+    || playerIds.has(details.playerId)
+    || (Array.isArray(details.tiedPlayerIds) && details.tiedPlayerIds.some(id => playerIds.has(id)));
+}
+
+function removeProfileReferencesFromRooms(removedProfiles) {
+  const profileIds = new Set(removedProfiles.map(profile => profile.profileId));
+  let roomsUpdated = 0;
+  let roomsRetired = 0;
+  for (const [code, room] of rooms) {
+    const people = [...room.players, ...(room.spectators || []), ...(room.departedPlayers || [])];
+    const removedPeople = people.filter(person => profileIds.has(person.profileId));
+    if (!removedPeople.length) continue;
+    const playerIds = new Set(removedPeople.map(person => person.id));
+    const currentPlayerId = room.players[room.turnIndex]?.id;
+    const removedCurrentPlayer = playerIds.has(currentPlayerId);
+    const removedWinner = playerIds.has(room.winnerId);
+
+    room.players = room.players.filter(person => !profileIds.has(person.profileId));
+    room.spectators = (room.spectators || []).filter(person => !profileIds.has(person.profileId));
+    room.departedPlayers = (room.departedPlayers || []).filter(person => !profileIds.has(person.profileId));
+    room.chat = (room.chat || []).filter(message => !playerIds.has(message.playerId));
+    room.reactions = (room.reactions || []).filter(reaction => !playerIds.has(reaction.playerId));
+    room.events = (room.events || []).filter(event => !profileReferenceInEvent(event, playerIds));
+    room.showdownContenders = (room.showdownContenders || []).filter(id => !playerIds.has(id));
+    if (room.lastOutcome && (playerIds.has(room.lastOutcome.actorId) || playerIds.has(room.lastOutcome.targetId))) {
+      room.lastOutcome = null;
+      room.lastRoll = null;
+      room.lastReward = null;
+    }
+
+    if (!room.players.length) {
+      botPlans.delete(code);
+      rooms.delete(code);
+      retiredRooms.add(code);
+      roomsRetired += 1;
+      continue;
+    }
+
+    if (!room.players.some(player => player.id === room.hostId)) {
+      room.hostId = (room.players.find(player => !player.isBot) || room.players[0]).id;
+    }
+    const currentIndex = room.players.findIndex(player => player.id === currentPlayerId);
+    room.turnIndex = currentIndex >= 0 ? currentIndex : room.turnIndex % room.players.length;
+    if (removedCurrentPlayer) {
+      room.turnScore = 0;
+      room.rollStreak = 0;
+      room.freezeUsed = false;
+      room.turnDeadline = room.phase === 'playing' && !room.paused ? Date.now() + room.turnDurationMs : null;
+    }
+
+    if (removedWinner || (room.phase === 'playing' && room.mode !== 'battle' && room.players.length < 2)) {
+      resetMatch(room);
+    } else if (room.phase === 'playing' && room.mode === 'battle') {
+      if (!reconcileWinner(room) && room.players[room.turnIndex]?.score <= 0) {
+        nextTurn(room, 'A player profile was removed by FALCON');
+      }
+    } else if (room.phase === 'playing' && room.mode === 'showdown' && room.showdownSuddenDeath && room.showdownContenders.length === 1) {
+      const remaining = room.players.find(player => player.id === room.showdownContenders[0]);
+      if (remaining) finishMatch(room, remaining);
+    }
+    if (room.phase !== 'finished') room.message = 'A player profile was removed by FALCON';
+    bump(room);
+    roomsUpdated += 1;
+  }
+  return { roomsUpdated, roomsRetired };
+}
+
+function syncProfileAcrossRooms(profileId, previousDisplayName, profile) {
+  let roomsUpdated = 0;
+  for (const room of rooms.values()) {
+    const people = [...room.players, ...(room.spectators || []), ...(room.departedPlayers || [])];
+    const matching = people.filter(person => person.profileId === profileId);
+    if (!matching.length) continue;
+    const playerIds = new Set(matching.map(person => person.id));
+    for (const person of matching) {
+      person.name = profile.displayName;
+      person.profile = profileSummary(profile);
+    }
+    for (const message of room.chat || []) {
+      if (playerIds.has(message.playerId)) message.name = profile.displayName;
+    }
+    const replaceName = value => typeof value === 'string' && previousDisplayName
+      ? value.split(previousDisplayName).join(profile.displayName)
+      : value;
+    room.message = replaceName(room.message);
+    for (const event of room.events || []) event.text = replaceName(event.text);
+    bump(room);
+    roomsUpdated += 1;
+  }
+  if (roomsUpdated) persistRooms();
+  return roomsUpdated;
 }
 
 function finishMatch(room, player, banked = 0) {
@@ -252,7 +393,7 @@ function reconcileWinner(room, preferredPlayer = null, banked = 0) {
 }
 
 function addSpectator(room, name, profile = null) {
-  const spectator = { id: crypto.randomUUID(), name, profileId: profile?.id || null, profile: profileSummary(profile), ...identitySecrets(), joinedAt: Date.now() };
+  const spectator = { id: crypto.randomUUID(), name: cleanName(name), profileId: profile?.id || null, profile: profileSummary(profile), ...identitySecrets(), joinedAt: Date.now() };
   room.spectators.push(spectator);
   room.updatedAt = Date.now();
   return spectator;
@@ -261,7 +402,7 @@ function addSpectator(room, name, profile = null) {
 function addPlayer(room, name, profile = null) {
   const player = {
     id: crypto.randomUUID(),
-    name,
+    name: cleanName(name),
     score: 0,
     shieldAvailable: true,
     frozen: false,
@@ -1177,6 +1318,29 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 401, { error: 'Invalid admin key.' });
       }
       clearAuthThrottle(req, 'admin');
+      if (req.method === 'GET' && parts[2] === 'profiles' && parts.length === 3) {
+        return sendJson(res, 200, { profiles: await profiles.adminList() });
+      }
+      if (req.method === 'PATCH' && parts[2] === 'profiles' && parts[3] && parts.length === 4) {
+        const profileId = decodeURIComponent(parts[3]);
+        const changes = await readJson(req);
+        const updated = await profiles.adminUpdate(profileId, changes);
+        if (updated.previousDisplayName !== updated.profile.displayName) {
+          await recordsStore.renameProfile(profileId, updated.profile.displayName);
+        }
+        const roomsUpdated = syncProfileAcrossRooms(profileId, updated.previousDisplayName, updated.profile);
+        const safeProfile = (await profiles.adminList()).find(profile => profile.id === profileId);
+        return sendJson(res, 200, { profile: safeProfile, roomsUpdated });
+      }
+      if (req.method === 'DELETE' && parts[2] === 'profiles' && parts[3] && parts.length === 4) {
+        const profileId = decodeURIComponent(parts[3]);
+        const deleted = await profiles.adminDelete(profileId);
+        const recordsRemoved = await recordsStore.removeProfiles([profileId]);
+        const removal = removeProfileReferencesFromRooms([{ profileId, displayName: deleted.displayName }]);
+        if (removal.roomsUpdated || removal.roomsRetired) persistRooms();
+        if (removal.roomsRetired) persistRetiredRooms();
+        return sendJson(res, 200, { deleted: true, profile: deleted, recordsRemoved, ...removal });
+      }
       if (req.method === 'GET' && parts[2] === 'records' && parts.length === 3) {
         return sendJson(res, 200, await recordsStore.records(url.searchParams.get('limit')));
       }

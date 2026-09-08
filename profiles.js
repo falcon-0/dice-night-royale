@@ -5,9 +5,18 @@ const { readJsonFile, writeJsonFile } = require('./json-store');
 
 const scrypt = promisify(crypto.scrypt);
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_DISPLAY_NAME_LENGTH = 10;
+const REMOVED_PROFILE_NAME = 'ALOYINLEPONSMALLIE';
+
+const PROFILE_TITLES = Object.freeze({
+  founder: { label: 'Founder', icon: '♛', variant: 'founder' },
+  triple_champion: { label: '×3 Dice Night Champion', icon: '🏆', variant: 'champion' }
+});
 
 const ACHIEVEMENTS = Object.freeze({
-  profile_created: { name: 'Founding Player', icon: '◆', description: 'Create a permanent player profile.' },
+  profile_created: { name: 'First Roll', icon: '🎲', description: 'Create your Dice Night player profile.' },
+  founder: { name: 'Founder', icon: '♛', description: 'Founder of Dice Night.' },
+  triple_champion: { name: '×3 Dice Night Champion', icon: '🏆', description: 'Three-time Dice Night champion.' },
   first_match: { name: 'First Night', icon: '🎲', description: 'Complete your first match.' },
   first_win: { name: 'Crowned', icon: '🏆', description: 'Win your first match.' },
   hot_hand: { name: 'Hot Hand', icon: '🔥', description: 'Bank 25 or more points at once.' },
@@ -23,7 +32,7 @@ function clone(value) {
 }
 
 function cleanDisplayName(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 18);
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, MAX_DISPLAY_NAME_LENGTH);
 }
 
 function normalizeCode(value) {
@@ -90,6 +99,68 @@ class ProfileService {
       achievements: Array.isArray(saved.achievements) ? saved.achievements : [],
       completedMatches: Array.isArray(saved.completedMatches) ? saved.completedMatches : []
     };
+    const removedProfiles = this.local.profiles
+      .filter(profile => String(profile.displayName || '').trim().toUpperCase() === REMOVED_PROFILE_NAME)
+      .map(profile => ({ profileId: profile.id, displayName: profile.displayName }));
+    const removedProfileIds = new Set(removedProfiles.map(profile => profile.profileId));
+    if (removedProfileIds.size) {
+      this.local.profiles = this.local.profiles.filter(profile => !removedProfileIds.has(profile.id));
+      this.local.sessions = this.local.sessions.filter(session => !removedProfileIds.has(session.profileId));
+      this.local.achievements = this.local.achievements.filter(achievement => !removedProfileIds.has(achievement.profileId));
+      this.local.completedMatches = this.local.completedMatches.filter(item => {
+        if (typeof item === 'string') return ![...removedProfileIds].some(profileId => item.startsWith(`${profileId}:`));
+        return !removedProfileIds.has(item?.profileId);
+      });
+    }
+
+    const renamedProfiles = [];
+    let changed = false;
+    const hasAchievement = (profileId, key) => this.local.achievements.some(item => item.profileId === profileId && item.key === key);
+    const grantAchievement = (profileId, key) => {
+      if (hasAchievement(profileId, key)) return;
+      this.local.achievements.push({ profileId, key, unlockedAt: new Date().toISOString() });
+      changed = true;
+    };
+
+    if (removedProfileIds.size) changed = true;
+    for (const profile of this.local.profiles) {
+      if (/^bishop01$/i.test(profile.displayName)) {
+        renamedProfiles.push({ profileId: profile.id, from: profile.displayName, to: 'ISSA' });
+        profile.displayName = 'ISSA';
+        profile.featuredTitleKey = 'triple_champion';
+        grantAchievement(profile.id, 'triple_champion');
+        changed = true;
+      } else {
+        const cleanedName = cleanDisplayName(profile.displayName);
+        if (cleanedName && cleanedName !== profile.displayName) {
+          renamedProfiles.push({ profileId: profile.id, from: profile.displayName, to: cleanedName });
+          profile.displayName = cleanedName;
+          changed = true;
+        }
+      }
+    }
+
+    const founderProfileIds = new Set(this.local.profiles.filter(item => item.displayName === 'FALCON').map(item => item.id));
+    for (const profile of this.local.profiles) {
+      if (profile.featuredTitleKey === 'founder' && !founderProfileIds.has(profile.id)) {
+        delete profile.featuredTitleKey;
+        changed = true;
+      }
+    }
+    const filteredAchievements = this.local.achievements.filter(item => item.key !== 'founder' || founderProfileIds.has(item.profileId));
+    if (filteredAchievements.length !== this.local.achievements.length) {
+      this.local.achievements = filteredAchievements;
+      changed = true;
+    }
+    const founderAlreadyAssigned = this.local.achievements.some(item => item.key === 'founder');
+    if (!founderAlreadyAssigned) {
+      for (const profile of this.local.profiles.filter(item => item.displayName === 'FALCON')) {
+        profile.featuredTitleKey = 'founder';
+        grantAchievement(profile.id, 'founder');
+      }
+    }
+    if (changed) this.persistLocal();
+    return { renamedProfiles, removedProfiles };
   }
 
   persistLocal() {
@@ -170,6 +241,9 @@ class ProfileService {
       displayName: profile.displayName,
       xp: Number(profile.xp || 0),
       level: levelFor(profile.xp),
+      featuredTitle: PROFILE_TITLES[profile.featuredTitleKey]
+        ? { key: profile.featuredTitleKey, ...PROFILE_TITLES[profile.featuredTitleKey] }
+        : null,
       stats: {
         games: Number(profile.games || 0),
         wins: Number(profile.wins || 0),
@@ -223,6 +297,90 @@ class ProfileService {
       });
   }
 
+  async adminList() {
+    const achievementCounts = new Map();
+    for (const achievement of this.local.achievements) {
+      achievementCounts.set(achievement.profileId, (achievementCounts.get(achievement.profileId) || 0) + 1);
+    }
+    return this.local.profiles
+      .map(profile => ({
+        id: profile.id,
+        displayName: profile.displayName,
+        xp: Number(profile.xp || 0),
+        level: levelFor(profile.xp),
+        games: Number(profile.games || 0),
+        wins: Number(profile.wins || 0),
+        featuredTitle: PROFILE_TITLES[profile.featuredTitleKey]
+          ? { key: profile.featuredTitleKey, ...PROFILE_TITLES[profile.featuredTitleKey] }
+          : null,
+        achievementCount: achievementCounts.get(profile.id) || 0,
+        createdAt: profile.createdAt || null,
+        lastSeenAt: profile.lastSeenAt || null
+      }))
+      .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  }
+
+  async adminUpdate(id, changes = {}) {
+    const allowed = new Set(['displayName', 'xp', 'games', 'wins', 'featuredTitle']);
+    const supplied = Object.keys(changes);
+    if (!supplied.length || supplied.some(key => !allowed.has(key))) {
+      throw Object.assign(new Error('Choose one or more editable profile fields.'), { status: 400 });
+    }
+    const profile = this.local.profiles.find(item => item.id === id);
+    if (!profile) throw Object.assign(new Error('Profile not found.'), { status: 404 });
+
+    const displayName = Object.hasOwn(changes, 'displayName') ? cleanDisplayName(changes.displayName) : profile.displayName;
+    if (!displayName) throw Object.assign(new Error('Choose a profile name.'), { status: 400 });
+    const integerField = (key, fallback) => {
+      if (!Object.hasOwn(changes, key)) return Number(fallback || 0);
+      const value = Number(changes[key]);
+      if (!Number.isSafeInteger(value) || value < 0) {
+        throw Object.assign(new Error(`${key} must be a non-negative whole number.`), { status: 400 });
+      }
+      return value;
+    };
+    const xp = integerField('xp', profile.xp);
+    const games = integerField('games', profile.games);
+    const wins = integerField('wins', profile.wins);
+    if (wins > games) throw Object.assign(new Error('Wins cannot be greater than games.'), { status: 400 });
+
+    let featuredTitleKey = profile.featuredTitleKey || null;
+    if (Object.hasOwn(changes, 'featuredTitle')) {
+      const requested = changes.featuredTitle === null ? 'none' : String(changes.featuredTitle);
+      if (!['none', 'founder', 'triple_champion'].includes(requested)) {
+        throw Object.assign(new Error('Unknown featured title.'), { status: 400 });
+      }
+      featuredTitleKey = requested === 'none' ? null : requested;
+    }
+    if (featuredTitleKey === 'founder' && displayName !== 'FALCON') {
+      throw Object.assign(new Error('The Founder title is reserved for the exact FALCON profile.'), { status: 403 });
+    }
+
+    const previousDisplayName = profile.displayName;
+    Object.assign(profile, { displayName, xp, games, wins });
+    if (featuredTitleKey) profile.featuredTitleKey = featuredTitleKey;
+    else delete profile.featuredTitleKey;
+    if (featuredTitleKey && !this.local.achievements.some(item => item.profileId === profile.id && item.key === featuredTitleKey)) {
+      this.local.achievements.push({ profileId: profile.id, key: featuredTitleKey, unlockedAt: new Date().toISOString() });
+    }
+    this.persistLocal();
+    return { profile: await this.byId(profile.id), previousDisplayName };
+  }
+
+  async adminDelete(id) {
+    const profile = this.local.profiles.find(item => item.id === id);
+    if (!profile) throw Object.assign(new Error('Profile not found.'), { status: 404 });
+    this.local.profiles = this.local.profiles.filter(item => item.id !== id);
+    this.local.sessions = this.local.sessions.filter(session => session.profileId !== id);
+    this.local.achievements = this.local.achievements.filter(achievement => achievement.profileId !== id);
+    this.local.completedMatches = this.local.completedMatches.filter(item => {
+      if (typeof item === 'string') return !item.startsWith(`${id}:`);
+      return item?.profileId !== id;
+    });
+    this.persistLocal();
+    return { id: profile.id, displayName: profile.displayName };
+  }
+
   async completeMatch(room) {
     const profiledPlayers = room.players.filter(player => player.profileId);
     for (const player of profiledPlayers) {
@@ -261,11 +419,15 @@ class ProfileService {
       profile.totalBanked = 0;
       profile.totalFreezes = 0;
     }
-    this.local.achievements = this.local.achievements.filter(item => item.key === 'profile_created');
+    const permanentAchievements = new Set(['profile_created', 'founder', 'triple_champion']);
+    this.local.achievements = this.local.achievements.filter(item => permanentAchievements.has(item.key));
     this.local.completedMatches = [];
     this.persistLocal();
     return { profilesReset: this.local.profiles.length };
   }
 }
 
-module.exports = { ProfileService, ACHIEVEMENTS, cleanDisplayName, normalizeCode, levelFor };
+module.exports = {
+  ProfileService, ACHIEVEMENTS, PROFILE_TITLES, MAX_DISPLAY_NAME_LENGTH,
+  cleanDisplayName, normalizeCode, levelFor
+};

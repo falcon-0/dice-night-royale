@@ -19,7 +19,9 @@ Rooms, profiles, achievements, and completed match records are saved locally und
 - Guaranteed server-side winner detection, a full-screen recap, confetti, and an original victory theme
 - Always-visible event feed, score progress, chat, reactions, spectators, and saved room progress
 - Optional player profiles with a profile code, six-digit PIN, lifetime statistics, and achievements
-- Expanded Falcon Admin Panel embedded directly in the normal game page, including leaderboard reset
+- Animated honorary profile titles, including FALCON Founder and ×3 Dice Night Champion
+- Expanded Falcon Admin Panel with a saved-user list, profile editing/removal, and leaderboard reset
+- Short, readable player names capped at 10 characters
 - Responsive layouts tuned separately for phones and large desktop tables
 - Lightweight local JSON storage with no separate database installation
 

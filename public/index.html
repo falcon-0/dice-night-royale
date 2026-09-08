@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=311">
+  <link rel="stylesheet" href="/styles.css?v=313">
 </head>
 <body>
   <section id="royale-intro" class="royale-intro" role="dialog" aria-modal="true" aria-labelledby="intro-title">
@@ -54,8 +54,9 @@
         </div>
         <div id="profile-strip" class="profile-strip">Playing as a guest. <button id="profile-strip-button" type="button">Save your stats</button></div>
         <form id="entry-form">
-          <label for="name-input">Your name</label>
-          <input id="name-input" maxlength="18" autocomplete="nickname" placeholder="Lucky player" required>
+          <label for="name-input">Your name <small>10 characters max</small></label>
+          <input id="name-input" maxlength="10" autocomplete="nickname" placeholder="Lucky name" aria-describedby="name-limit" required>
+          <small id="name-limit" class="field-hint">Keep it short so everyone can read it at the table.</small>
           <div id="room-field" class="hidden">
             <label for="room-input">Room code</label>
             <input id="room-input" maxlength="5" autocomplete="off" spellcheck="false" placeholder="ABCDE">
@@ -236,6 +237,7 @@
     <div class="update-list">
       <article><span>NEW</span><div><strong>Two truly different dice</strong><p>Choose the cream Normal Die or the black-and-gold Deadly Risk Die on every Royale roll.</p></div></article>
       <article><span>NEW</span><div><strong>Game 2 · Battle Dice</strong><p>Start with 30 health, attack the next standing rival, and survive until everyone else is knocked out.</p></div></article>
+      <article><span>NEW</span><div><strong>Prestige profiles</strong><p>Special Champion and Founder titles shine at the table, and Falcon can manage saved users from the Admin Panel.</p></div></article>
       <article><span>01</span><div><strong>Five-Round Showdown</strong><p>Everyone gets five turns. The highest score wins, and only tied leaders enter sudden death.</p></div></article>
       <article><span>02</span><div><strong>Practice bots</strong><p>FALCON can fill open seats with Careful, Balanced, or Bold rivals for instant testing.</p></div></article>
       <article><span>03</span><div><strong>Royale leaderboard</strong><p>Everyone can see the table’s top players, wins, levels, and banked points.</p></div></article>
@@ -257,7 +259,8 @@
       <div class="profile-forms">
         <form id="create-profile-form">
           <h3>Create profile</h3>
-          <input id="profile-name" maxlength="18" placeholder="Player name" required>
+          <label for="profile-name">Player name <small>10 characters max</small></label>
+          <input id="profile-name" maxlength="10" placeholder="Player name" required>
           <input id="profile-pin" maxlength="6" inputmode="numeric" type="password" placeholder="Choose 6-digit PIN" required>
           <button class="primary-button">Create and sign in</button>
         </form>
@@ -288,6 +291,15 @@
     <div id="inline-admin-content" class="hidden">
       <div class="inline-admin-stats"><span><b id="inline-room-total">0</b> rooms</span><span><b id="inline-player-total">0</b> players</span><span><b id="inline-match-total">0</b> saved matches</span></div>
       <div class="inline-admin-actions"><button id="inline-admin-refresh">Refresh</button><button id="inline-reset-leaderboard" class="danger">Reset leaderboard</button><button id="inline-admin-lock">Lock Admin</button></div>
+      <section class="inline-admin-users" aria-labelledby="inline-admin-users-title">
+        <div class="inline-admin-section-head">
+          <div><h3 id="inline-admin-users-title">User list</h3><p>Edit saved profiles. Removing a user permanently deletes their login.</p></div>
+          <span><b id="inline-profile-total">0</b> saved users</span>
+        </div>
+        <p id="inline-admin-profile-status" class="inline-admin-profile-status" role="status"></p>
+        <div id="inline-admin-user-list" class="inline-admin-user-list"></div>
+      </section>
+      <div class="inline-admin-section-head room-list-heading"><div><h3>Live rooms</h3><p>Manage the games that are currently open.</p></div></div>
       <div id="inline-admin-rooms" class="inline-admin-rooms"></div>
     </div>
   </dialog>
@@ -328,6 +340,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=311"></script>
+  <script src="/app.js?v=313"></script>
 </body>
 </html>

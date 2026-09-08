@@ -126,6 +126,29 @@ class LocalRecordStore {
     this.persist();
   }
 
+  async renameProfile(profileId, displayName) {
+    let changed = false;
+    for (const match of this.matches) {
+      for (const player of match.players || []) {
+        if (player.profileId !== profileId || player.playerName === displayName) continue;
+        player.playerName = displayName;
+        changed = true;
+        if (match.winnerPlayerId === player.playerId) match.winnerName = displayName;
+      }
+    }
+    if (changed) this.persist();
+    return changed;
+  }
+
+  async removeProfiles(profileIds) {
+    const removed = new Set(profileIds || []);
+    if (!removed.size) return 0;
+    const before = this.matches.length;
+    this.matches = this.matches.filter(match => !(match.players || []).some(player => removed.has(player.profileId)));
+    if (this.matches.length !== before) this.persist();
+    return before - this.matches.length;
+  }
+
   async close() {}
 }
 

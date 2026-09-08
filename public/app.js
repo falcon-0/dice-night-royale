@@ -47,7 +47,9 @@ function renderProfile() {
   $('#profile-strip').innerHTML = `Level ${state.profile.level} <b>${escapeHtml(state.profile.displayName)}</b> · ${state.profile.stats.wins} wins <button id="profile-strip-button" type="button">View profile</button>`;
   $('#profile-strip-button').addEventListener('click', () => $('#profile-dialog').showModal());
   const stats = state.profile.stats;
-  $('#profile-card').innerHTML = `<h3>${escapeHtml(state.profile.displayName)} · Level ${state.profile.level}</h3><p>Profile code <b>${escapeHtml(state.profile.profileCode)}</b> · ${state.profile.xp} XP</p><div class="profile-stats"><span>${stats.games} games</span><span>${stats.wins} wins</span><span>${stats.totalRolls} rolls</span><span>${stats.totalBanked} banked</span><span>Best bank ${stats.bestBank}</span></div><div class="achievement-grid">${state.profile.achievements.length ? state.profile.achievements.map(item => `<span title="${escapeHtml(item.description || '')}">${item.icon || '◆'} ${escapeHtml(item.name || item.key)}</span>`).join('') : '<span>Play a match to unlock badges</span>'}</div>`;
+  const title = state.profile.featuredTitle;
+  const featuredTitle = title ? `<div class="profile-featured-title ${title.variant === 'champion' ? 'champion-title' : 'founder-title'}"><span>${escapeHtml(title.icon)}</span>${escapeHtml(title.label)}</div>` : '';
+  $('#profile-card').innerHTML = `<h3>${escapeHtml(state.profile.displayName)} · Level ${state.profile.level}</h3>${featuredTitle}<p>Profile code <b>${escapeHtml(state.profile.profileCode)}</b> · ${state.profile.xp} XP</p><div class="profile-stats"><span>${stats.games} games</span><span>${stats.wins} wins</span><span>${stats.totalRolls} rolls</span><span>${stats.totalBanked} banked</span><span>Best bank ${stats.bestBank}</span></div><div class="achievement-grid">${state.profile.achievements.length ? state.profile.achievements.map(item => `<span class="${item.key === 'triple_champion' ? 'honor-achievement champion-title' : item.key === 'founder' ? 'honor-achievement founder-title' : ''}" title="${escapeHtml(item.description || '')}">${item.icon || '◆'} ${escapeHtml(item.name || item.key)}</span>`).join('') : '<span>Play a match to unlock badges</span>'}</div>`;
 }
 
 async function loadProfile() {
@@ -269,6 +271,10 @@ function playerCard(player, index, room) {
   const bot = Boolean(player.isBot);
   const showdown = room.mode?.id === 'showdown';
   const battle = room.mode?.id === 'battle';
+  const title = player.profile?.featuredTitle;
+  const titleVariant = title?.variant === 'champion' ? 'champion' : title?.variant === 'founder' ? 'founder' : '';
+  const titleLabel = title ? `${title.icon} ${title.label}` : '';
+  const titleBadge = title ? `<span class="player-title ${titleVariant}-title">${escapeHtml(title.icon)} ${escapeHtml(title.label)}</span>` : '';
   const roundLimit = room.showdown?.turnLimit || 5;
   const progress = showdown
     ? Math.max(0, Math.min(100, (Number(player.turnsTaken || 0) / roundLimit) * 100))
@@ -283,8 +289,9 @@ function playerCard(player, index, room) {
     : showdown
       ? `${player.score} points, ${player.turnsTaken || 0} of ${roundLimit} turns complete`
       : `${player.score} of ${room.targetScore || room.mode?.targetScore || 100} points`;
-  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${bot ? 'bot' : ''} ${player.ready ? 'ready' : ''} ${battle && player.score <= 0 ? 'eliminated' : ''}" ${active ? 'aria-current="true"' : ''} aria-label="${escapeHtml(displayName)}, ${escapeHtml(status)}${active ? ', current turn' : ''}">
+  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${bot ? 'bot' : ''} ${player.ready ? 'ready' : ''} ${titleVariant ? `honor-card ${titleVariant}-card` : ''} ${battle && player.score <= 0 ? 'eliminated' : ''}" ${active ? 'aria-current="true"' : ''} aria-label="${escapeHtml(displayName)}, ${escapeHtml(status)}${titleLabel ? `, ${escapeHtml(titleLabel)}` : ''}${active ? ', current turn' : ''}">
     <div class="player-top"><span class="avatar">${admin ? '♛' : bot ? '⚙' : escapeHtml(player.name[0].toUpperCase())}</span><span class="player-name">${escapeHtml(displayName)}</span>${admin ? '<span class="admin-badge">ADMIN</span>' : ''}${bot ? `<span class="bot-badge">${escapeHtml((player.botStyle || 'BOT').toUpperCase())}</span>` : ''}${player.id === room.meId ? '<span class="you">YOU</span>' : ''}<span class="player-perks" title="${player.frozen ? 'Next turn frozen' : player.shieldAvailable ? 'Safety Net available' : ''}">${player.frozen ? '❄' : player.shieldAvailable ? '◈' : ''}</span></div>
+    ${titleBadge}
     <div class="player-score"><strong>${player.score}</strong><span>${room.phase === 'lobby' ? player.ready ? 'READY' : 'WAITING' : battle ? 'HEALTH' : showdown ? `${player.turnsTaken || 0}/${roundLimit} TURNS` : `/ ${room.targetScore || room.mode?.targetScore || 100}`}</span></div>
     ${room.phase !== 'lobby' ? `<div class="player-progress" aria-hidden="true"><span style="width:${progress}%"></span></div>` : ''}
     ${active ? '<span class="current-turn">CURRENT TURN</span>' : ''}
@@ -717,9 +724,62 @@ $('#chat-form').addEventListener('submit', async event => {
 });
 
 let inlineAdminToken = sessionStorage.getItem('dice-night-admin') || '';
+const INLINE_ADMIN_TITLES = [
+  { value: '', label: 'No featured title' },
+  { value: 'triple_champion', label: '×3 Champion' },
+  { value: 'founder', label: 'Founder' }
+];
 
 async function inlineAdminApi(url, options = {}) {
   return api(url, { ...options, headers: { Authorization: `Bearer ${inlineAdminToken}`, ...(options.headers || {}) } });
+}
+
+function inlineAdminProfile(profile) {
+  const stats = profile.stats || {};
+  const featuredTitleKey = profile.featuredTitleKey || profile.featuredTitle?.key || '';
+  return {
+    id: String(profile.id || profile.profileId || ''),
+    displayName: String(profile.displayName || profile.name || ''),
+    xp: Math.max(0, Number(profile.xp || 0)),
+    games: Math.max(0, Number(profile.games ?? stats.games ?? 0)),
+    wins: Math.max(0, Number(profile.wins ?? stats.wins ?? 0)),
+    featuredTitleKey: INLINE_ADMIN_TITLES.some(title => title.value === featuredTitleKey) ? featuredTitleKey : ''
+  };
+}
+
+function inlineAdminProfileMarkup(rawProfile) {
+  const profile = inlineAdminProfile(rawProfile);
+  if (!profile.id) return '';
+  const titleOptions = INLINE_ADMIN_TITLES.map(title => `<option value="${title.value}" ${title.value === profile.featuredTitleKey ? 'selected' : ''}>${escapeHtml(title.label)}</option>`).join('');
+  return `<form class="inline-admin-user" data-admin-profile-form data-profile-id="${escapeHtml(profile.id)}" data-profile-name="${escapeHtml(profile.displayName)}">
+    <label class="admin-user-name"><span>Name</span><input name="displayName" maxlength="10" value="${escapeHtml(profile.displayName)}" autocomplete="off" required></label>
+    <label><span>XP</span><input name="xp" type="number" min="0" step="1" inputmode="numeric" value="${profile.xp}" required></label>
+    <label><span>Games</span><input name="games" type="number" min="0" step="1" inputmode="numeric" value="${profile.games}" required></label>
+    <label><span>Wins</span><input name="wins" type="number" min="0" step="1" inputmode="numeric" value="${profile.wins}" required></label>
+    <label class="admin-user-title"><span>Featured title</span><select name="featuredTitleKey">${titleOptions}</select></label>
+    <div class="admin-user-actions"><button type="submit">Save</button><button type="button" class="danger" data-admin-profile-delete>Remove</button></div>
+  </form>`;
+}
+
+function renderInlineAdminProfiles(payload) {
+  const profiles = (Array.isArray(payload) ? payload : payload?.profiles || []).map(inlineAdminProfile).filter(profile => profile.id);
+  $('#inline-profile-total').textContent = profiles.length;
+  $('#inline-admin-user-list').innerHTML = profiles.length
+    ? profiles.map(inlineAdminProfileMarkup).join('')
+    : '<p class="inline-admin-empty">No saved profiles yet.</p>';
+  $('#inline-admin-profile-status').textContent = '';
+}
+
+function hideInlineAdminContent({ clearToken = false } = {}) {
+  $('#inline-admin-content').classList.add('hidden');
+  $('#inline-admin-login').classList.remove('hidden');
+  $('#inline-admin-user-list').innerHTML = '';
+  $('#inline-profile-total').textContent = '0';
+  $('#inline-admin-profile-status').textContent = '';
+  if (clearToken) {
+    inlineAdminToken = '';
+    sessionStorage.removeItem('dice-night-admin');
+  }
 }
 
 function inlineAdminRoom(room) {
@@ -730,13 +790,23 @@ function inlineAdminRoom(room) {
 }
 
 async function refreshInlineAdmin() {
-  const roomData = await inlineAdminApi('/api/admin/rooms');
-  let records = { summary: { matches: 0 } };
-  try { records = await inlineAdminApi('/api/admin/records?limit=1'); } catch { /* Records appear after the server update. */ }
+  $('#inline-admin-profile-status').textContent = 'Loading saved users…';
+  const [roomData, profileResult, records] = await Promise.all([
+    inlineAdminApi('/api/admin/rooms'),
+    inlineAdminApi('/api/admin/profiles').then(data => ({ data })).catch(error => ({ error })),
+    inlineAdminApi('/api/admin/records?limit=1').catch(() => ({ summary: { matches: 0 } }))
+  ]);
   $('#inline-room-total').textContent = roomData.rooms.length;
   $('#inline-player-total').textContent = roomData.rooms.reduce((sum, room) => sum + room.players.length, 0);
   $('#inline-match-total').textContent = records.summary.matches || 0;
   $('#inline-admin-rooms').innerHTML = roomData.rooms.length ? roomData.rooms.map(inlineAdminRoom).join('') : '<p>No active rooms.</p>';
+  if (profileResult.error) {
+    $('#inline-profile-total').textContent = '—';
+    $('#inline-admin-user-list').innerHTML = '<p class="inline-admin-empty">The saved user list is unavailable.</p>';
+    $('#inline-admin-profile-status').textContent = profileResult.error.message;
+  } else {
+    renderInlineAdminProfiles(profileResult.data);
+  }
   $('#inline-admin-login').classList.add('hidden');
   $('#inline-admin-content').classList.remove('hidden');
   $('#inline-admin-error').textContent = '';
@@ -750,7 +820,9 @@ async function inlineAdminAction(code, type, extra = {}) {
 $('#admin-deck-button').addEventListener('click', async () => {
   $('#admin-deck-dialog').showModal();
   if (inlineAdminToken) {
-    try { await refreshInlineAdmin(); } catch { $('#inline-admin-login').classList.remove('hidden'); }
+    try { await refreshInlineAdmin(); } catch { hideInlineAdminContent({ clearToken: true }); }
+  } else {
+    hideInlineAdminContent();
   }
 });
 $('#close-admin-deck').addEventListener('click', () => $('#admin-deck-dialog').close());
@@ -760,7 +832,10 @@ $('#inline-admin-login').addEventListener('submit', async event => {
   try {
     await refreshInlineAdmin();
     sessionStorage.setItem('dice-night-admin', inlineAdminToken);
-  } catch (error) { $('#inline-admin-error').textContent = 'That admin key did not work.'; }
+  } catch (error) {
+    hideInlineAdminContent({ clearToken: true });
+    $('#inline-admin-error').textContent = 'That admin key did not work.';
+  }
 });
 $('#inline-admin-refresh').addEventListener('click', () => refreshInlineAdmin().catch(error => { $('#inline-admin-error').textContent = error.message; }));
 $('#inline-reset-leaderboard').addEventListener('click', async () => {
@@ -772,10 +847,63 @@ $('#inline-reset-leaderboard').addEventListener('click', async () => {
   } catch (error) { $('#inline-admin-error').textContent = error.message; }
 });
 $('#inline-admin-lock').addEventListener('click', () => {
-  inlineAdminToken = '';
-  sessionStorage.removeItem('dice-night-admin');
-  $('#inline-admin-content').classList.add('hidden');
-  $('#inline-admin-login').classList.remove('hidden');
+  hideInlineAdminContent({ clearToken: true });
+});
+
+$('#inline-admin-user-list').addEventListener('submit', async event => {
+  const form = event.target.closest('[data-admin-profile-form]');
+  if (!form) return;
+  event.preventDefault();
+  const displayName = form.elements.displayName.value.trim();
+  const xp = Number(form.elements.xp.value);
+  const games = Number(form.elements.games.value);
+  const wins = Number(form.elements.wins.value);
+  if (!displayName || displayName.length > 10) {
+    $('#inline-admin-profile-status').textContent = 'Names must be 1 to 10 characters.';
+    form.elements.displayName.focus();
+    return;
+  }
+  if (![xp, games, wins].every(value => Number.isInteger(value) && value >= 0)) {
+    $('#inline-admin-profile-status').textContent = 'XP, games, and wins must be whole numbers at least 0.';
+    return;
+  }
+  if (wins > games) {
+    $('#inline-admin-profile-status').textContent = 'Wins cannot be higher than games played.';
+    form.elements.wins.focus();
+    return;
+  }
+  const submit = form.querySelector('[type="submit"]');
+  submit.disabled = true;
+  $('#inline-admin-profile-status').textContent = `Saving ${displayName}…`;
+  try {
+    await inlineAdminApi(`/api/admin/profiles/${encodeURIComponent(form.dataset.profileId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ displayName, xp, games, wins, featuredTitle: form.elements.featuredTitleKey.value || null })
+    });
+    await refreshInlineAdmin();
+    showToast(`${displayName} was updated`);
+  } catch (error) {
+    submit.disabled = false;
+    $('#inline-admin-profile-status').textContent = error.message;
+  }
+});
+
+$('#inline-admin-user-list').addEventListener('click', async event => {
+  const removeButton = event.target.closest('[data-admin-profile-delete]');
+  if (!removeButton) return;
+  const form = removeButton.closest('[data-admin-profile-form]');
+  const displayName = form.dataset.profileName || 'this user';
+  if (!confirm(`Permanently remove ${displayName}? Their profile login, title, and achievements will be deleted. This cannot be undone.`)) return;
+  removeButton.disabled = true;
+  $('#inline-admin-profile-status').textContent = `Removing ${displayName}…`;
+  try {
+    await inlineAdminApi(`/api/admin/profiles/${encodeURIComponent(form.dataset.profileId)}`, { method: 'DELETE' });
+    await refreshInlineAdmin();
+    showToast(`${displayName} was permanently removed`);
+  } catch (error) {
+    removeButton.disabled = false;
+    $('#inline-admin-profile-status').textContent = error.message;
+  }
 });
 $('#inline-admin-rooms').addEventListener('click', async event => {
   const room = event.target.closest('[data-admin-room]');

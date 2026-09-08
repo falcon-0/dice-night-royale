@@ -11,6 +11,7 @@ process.env.DATA_FILE = testDataFile;
 process.env.RETIRED_FILE = testRetiredFile;
 process.env.PROFILE_FILE = testProfileFile;
 process.env.RECORDS_FILE = testRecordsFile;
+process.env.ENABLE_ADMIN = '1';
 process.env.ADMIN_TOKEN = 'test-admin-key';
 const {
   server, recordsStore, profiles, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor,
@@ -18,6 +19,8 @@ const {
   expireTurnIfNeeded, processBotTurn, reconcileWinner, battleDieOutcome, MODES, APP_VERSION
 } = require('../server');
 const { readJsonFile, writeJsonFile } = require('../json-store');
+const { ProfileService } = require('../profiles');
+const { LocalRecordStore } = require('../records');
 let baseUrl;
 
 test.before(async () => {
@@ -59,7 +62,7 @@ test('room state never exposes private profile identifiers', () => {
   const { room, player } = createRoom('Ada');
   player.profile = { id: 'private-id', profileCode: 'SECRET88', level: 4, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] };
   const profile = publicState(room, player.id).players[0].profile;
-  assert.deepEqual(profile, { level: 4, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] });
+  assert.deepEqual(profile, { level: 4, featuredTitle: null, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] });
   assert.equal('id' in profile, false);
   assert.equal('profileCode' in profile, false);
   rooms.delete(room.code);
@@ -478,9 +481,11 @@ test('HTTP sessions protect identities, rotate on keyed rejoin, and promote spec
   rooms.delete(code);
 });
 
-test('private admin HTTP routes stay hidden unless explicitly enabled', async () => {
-  const response = await request('/api/admin/rooms', null, 'GET');
-  assert.equal(response.status, 404);
+test('private admin HTTP routes require the configured key', async () => {
+  const unauthorized = await request('/api/admin/rooms', null, 'GET');
+  assert.equal(unauthorized.status, 401);
+  const authorized = await request('/api/admin/rooms', null, 'GET', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(authorized.status, 200);
 });
 
 test('health identifies the V3.1 JSON server', async () => {
@@ -499,7 +504,7 @@ test('public leaderboard ranks profiles without exposing identity secrets', asyn
   assert.equal(created.status, 201);
   const response = await request('/api/leaderboard?limit=50', null, 'GET');
   assert.equal(response.status, 200);
-  const entry = response.data.leaderboard.find(player => player.displayName === 'Public Hero');
+  const entry = response.data.leaderboard.find(player => player.displayName === 'Public Her');
   assert.ok(entry);
   assert.deepEqual(Object.keys(entry).sort(), [
     'achievementCount', 'bestBank', 'displayName', 'games', 'level', 'rank',
@@ -663,6 +668,161 @@ test('winner reconciliation repairs an over-target room exactly once', () => {
   assert.equal(reconcileWinner(room), false);
   assert.equal(player.career.wins, 1);
   rooms.delete(room.code);
+});
+
+test('profile and room display names are capped at ten characters server-side', async () => {
+  const createdProfile = await request('/api/profiles', { displayName: 'LongPlayerName', pin: '112233' });
+  assert.equal(createdProfile.status, 201);
+  assert.equal(createdProfile.data.profile.displayName, 'LongPlayer');
+
+  const createdRoom = await request('/api/rooms', { name: 'ABCDEFGHIJKLMNO' });
+  assert.equal(createdRoom.status, 201);
+  assert.equal(createdRoom.data.room.players[0].name, 'ABCDEFGHIJ');
+  rooms.delete(createdRoom.data.room.code);
+});
+
+test('startup profile migration removes the retired identity and its private references', async () => {
+  const profileFile = path.join(os.tmpdir(), `dice-night-profile-migration-${process.pid}-${Date.now()}.json`);
+  const recordsFile = path.join(os.tmpdir(), `dice-night-record-migration-${process.pid}-${Date.now()}.json`);
+  try {
+    writeJsonFile(profileFile, {
+      profiles: [
+        { id: 'remove-id', displayName: 'ALOYINLEPONSMALLIE', pinHash: 'private', pinSalt: 'private', games: 2, wins: 1 },
+        { id: 'keep-id', displayName: 'LongKeeperName', pinHash: 'private', pinSalt: 'private', games: 1, wins: 0 }
+      ],
+      sessions: [
+        { profileId: 'remove-id', tokenHash: 'private-remove' },
+        { profileId: 'keep-id', tokenHash: 'private-keep' }
+      ],
+      achievements: [
+        { profileId: 'remove-id', key: 'first_win' },
+        { profileId: 'keep-id', key: 'profile_created' }
+      ],
+      completedMatches: ['remove-id:ROOM1:1', 'keep-id:ROOM2:1']
+    });
+    writeJsonFile(recordsFile, [
+      { id: 'ROOM1:1', players: [{ profileId: 'remove-id', playerName: 'ALOYINLEPONSMALLIE' }] },
+      { id: 'ROOM2:1', players: [{ profileId: 'keep-id', playerName: 'LongKeeperName' }] }
+    ]);
+
+    const service = new ProfileService({ file: profileFile });
+    const migration = await service.initialize();
+    assert.deepEqual(migration.removedProfiles, [{ profileId: 'remove-id', displayName: 'ALOYINLEPONSMALLIE' }]);
+    assert.deepEqual(service.local.profiles.map(profile => ({ id: profile.id, name: profile.displayName })), [{ id: 'keep-id', name: 'LongKeeper' }]);
+    assert.equal(service.local.sessions.some(session => session.profileId === 'remove-id'), false);
+    assert.equal(service.local.achievements.some(item => item.profileId === 'remove-id'), false);
+    assert.equal(service.local.completedMatches.some(item => String(item).startsWith('remove-id:')), false);
+
+    const store = new LocalRecordStore({ file: recordsFile });
+    await store.initialize();
+    assert.equal(await store.removeProfiles(['remove-id']), 1);
+    assert.deepEqual(store.matches.map(match => match.id), ['ROOM2:1']);
+  } finally {
+    for (const file of [profileFile, `${profileFile}.bak`, recordsFile, `${recordsFile}.bak`]) fs.rmSync(file, { force: true });
+  }
+});
+
+test('startup profile migration renames ISSA and reserves Founder for FALCON', async () => {
+  const profileFile = path.join(os.tmpdir(), `dice-night-honor-migration-${process.pid}-${Date.now()}.json`);
+  try {
+    writeJsonFile(profileFile, {
+      profiles: [
+        { id: 'falcon-id', displayName: 'FALCON', xp: 0 },
+        { id: 'bishop-id', displayName: 'Bishop01', xp: 600 },
+        { id: 'guest-id', displayName: 'Guest', xp: 0, featuredTitleKey: 'founder' }
+      ],
+      sessions: [],
+      achievements: [
+        { profileId: 'falcon-id', key: 'profile_created' },
+        { profileId: 'bishop-id', key: 'profile_created' },
+        { profileId: 'guest-id', key: 'profile_created' },
+        { profileId: 'guest-id', key: 'founder' }
+      ],
+      completedMatches: []
+    });
+
+    const service = new ProfileService({ file: profileFile });
+    const migration = await service.initialize();
+    assert.deepEqual(migration.renamedProfiles, [{ profileId: 'bishop-id', from: 'Bishop01', to: 'ISSA' }]);
+    const issa = await service.byId('bishop-id');
+    const falcon = await service.byId('falcon-id');
+    const guest = await service.byId('guest-id');
+    assert.equal(issa.displayName, 'ISSA');
+    assert.equal(issa.featuredTitle.label, '×3 Dice Night Champion');
+    assert.equal(issa.achievements.some(item => item.key === 'triple_champion'), true);
+    assert.equal(falcon.featuredTitle.key, 'founder');
+    assert.equal(falcon.achievements.some(item => item.key === 'founder'), true);
+    assert.equal(guest.featuredTitle, null);
+    assert.equal(guest.achievements.some(item => item.key === 'founder'), false);
+    assert.equal(guest.achievements.find(item => item.key === 'profile_created').name, 'First Roll');
+  } finally {
+    for (const file of [profileFile, `${profileFile}.bak`]) fs.rmSync(file, { force: true });
+  }
+});
+
+test('admin profile APIs expose safe fields, update rooms, enforce titles, and fully delete', async () => {
+  const created = await request('/api/profiles', { displayName: 'ManageMe', pin: '445566' });
+  assert.equal(created.status, 201);
+  const profileId = created.data.profile.id;
+  const roomResponse = await request('/api/rooms', { name: 'ignored', profileToken: created.data.profileToken });
+  assert.equal(roomResponse.status, 201);
+  const roomCode = roomResponse.data.room.code;
+  const deletedPlayerId = roomResponse.data.playerId;
+  const survivor = await request(`/api/rooms/${roomCode}/join`, { name: 'Survivor', role: 'player' });
+  assert.equal(survivor.status, 200);
+  addChatMessage(rooms.get(roomCode), deletedPlayerId, 'Remove this authored history');
+  rooms.get(roomCode).events.push({ type: 'test', text: 'authored event', details: { actorId: deletedPlayerId } });
+
+  const unauthorized = await request('/api/admin/profiles', null, 'GET');
+  assert.equal(unauthorized.status, 401);
+  const listed = await request('/api/admin/profiles', null, 'GET', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(listed.status, 200);
+  const listedProfile = listed.data.profiles.find(profile => profile.id === profileId);
+  assert.ok(listedProfile);
+  const serializedList = JSON.stringify(listedProfile);
+  for (const secret of ['pinHash', 'pinSalt', 'tokenHash', 'profileToken', 'profileCode']) assert.equal(serializedList.includes(secret), false);
+
+  const updated = await request(`/api/admin/profiles/${profileId}`, {
+    displayName: 'RenamedLonger', xp: 900, games: 3, wins: 2, featuredTitle: 'triple_champion'
+  }, 'PATCH', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.profile.displayName, 'RenamedLon');
+  assert.equal(updated.data.profile.xp, 900);
+  assert.equal(updated.data.profile.games, 3);
+  assert.equal(updated.data.profile.wins, 2);
+  assert.equal(updated.data.profile.featuredTitle.key, 'triple_champion');
+  assert.equal(rooms.get(roomCode).players[0].name, 'RenamedLon');
+  assert.equal(rooms.get(roomCode).players[0].profile.featuredTitle.key, 'triple_champion');
+
+  const invalidWins = await request(`/api/admin/profiles/${profileId}`, { games: 1, wins: 2 }, 'PATCH', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(invalidWins.status, 400);
+  const forbiddenFounder = await request(`/api/admin/profiles/${profileId}`, { featuredTitle: 'founder' }, 'PATCH', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(forbiddenFounder.status, 403);
+
+  const falcon = await request('/api/profiles', { displayName: 'FALCON', pin: '778899' });
+  const founder = await request(`/api/admin/profiles/${falcon.data.profile.id}`, { featuredTitle: 'founder' }, 'PATCH', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(founder.status, 200);
+  assert.equal(founder.data.profile.featuredTitle.key, 'founder');
+  await request(`/api/admin/profiles/${falcon.data.profile.id}`, null, 'DELETE', { Authorization: 'Bearer test-admin-key' });
+
+  profiles.local.completedMatches.push(`${profileId}:ARCHIVE:1`);
+  recordsStore.matches.push({ id: 'ARCHIVE:1', players: [{ profileId, playerName: 'RenamedLon' }] });
+  const deleted = await request(`/api/admin/profiles/${profileId}`, null, 'DELETE', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.data.deleted, true);
+  assert.equal(deleted.data.roomsUpdated, 1);
+  assert.equal(deleted.data.roomsRetired, 0);
+  assert.equal(rooms.get(roomCode).players.length, 1);
+  assert.equal(rooms.get(roomCode).hostId, survivor.data.playerId);
+  assert.equal(JSON.stringify(rooms.get(roomCode)).includes(profileId), false);
+  assert.equal(JSON.stringify(rooms.get(roomCode)).includes(deletedPlayerId), false);
+  assert.equal(recordsStore.matches.some(match => (match.players || []).some(player => player.profileId === profileId)), false);
+  assert.equal(profiles.local.sessions.some(session => session.profileId === profileId), false);
+  assert.equal(profiles.local.achievements.some(item => item.profileId === profileId), false);
+  assert.equal(profiles.local.completedMatches.some(item => String(item).startsWith(`${profileId}:`)), false);
+  const expired = await fetch(`${baseUrl}/api/profiles/me`, { headers: { Authorization: `Bearer ${created.data.profileToken}` } });
+  assert.equal(expired.status, 401);
+  rooms.delete(roomCode);
 });
 
 test('admin leaderboard reset keeps profiles but clears competitive records', async () => {

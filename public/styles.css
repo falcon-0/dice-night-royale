@@ -188,6 +188,7 @@ input:focus { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(199, 240, 10
 .secondary-button:hover:not(:disabled) { background: rgba(255,255,255,.16); }
 
 .error { min-height: 20px; color: var(--danger); font-size: .82rem; margin: 10px 0 0; }
+.field-hint { display: block; margin: -5px 0 9px; color: var(--muted); font-size: .68rem; line-height: 1.35; }
 .centered { text-align: center; }
 .card-footer { display: flex; align-items: center; gap: 10px; color: #68716c; font-size: .65rem; letter-spacing: .15em; justify-content: center; }
 .card-footer span { height: 1px; width: 38px; background: var(--line); }
@@ -468,6 +469,17 @@ dialog strong { color: var(--ink); }
 #play-panel[data-game-system="battle"] .active-game-label { color: var(--danger); border-color: rgba(255,143,121,.35); background: rgba(255,143,121,.08); }
 .player-card.eliminated { opacity: .48; filter: grayscale(.65); }
 .player-card.eliminated .player-score strong { text-decoration: line-through; }
+.player-card.honor-card { position: relative; overflow: hidden; }
+.player-card.champion-card { border-color: rgba(255,208,116,.7); box-shadow: 0 0 22px rgba(255,208,116,.18), inset 0 0 18px rgba(199,240,106,.05); animation: champion-card-glow 2.6s ease-in-out infinite; }
+.player-card.champion-card::before { content: ''; position: absolute; inset: -70% -35%; pointer-events: none; background: linear-gradient(110deg,transparent 42%,rgba(255,255,255,.22) 50%,transparent 58%); animation: champion-sweep 3.4s ease-in-out infinite; }
+.player-title,.profile-featured-title { position: relative; z-index: 1; display: inline-flex; width: fit-content; max-width: 100%; align-items: center; gap: 4px; margin: 7px 0 1px; padding: 4px 7px; overflow: hidden; border: 1px solid rgba(255,208,116,.4); border-radius: 999px; color: #ffe3a6; background: rgba(255,208,116,.1); font-size: .53rem; font-weight: 900; letter-spacing: .055em; line-height: 1; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.champion-title { color: #181107; border-color: #ffd074; background: linear-gradient(105deg,#ffd074,#fff1b9,#c7f06a,#ffd074); background-size: 220% 100%; box-shadow: 0 0 16px rgba(255,208,116,.3); animation: champion-title-shimmer 2.1s linear infinite; }
+.founder-title { color: #ffe3a6; border-color: rgba(255,208,116,.55); background: linear-gradient(120deg,rgba(92,60,16,.88),rgba(255,208,116,.18)); }
+.profile-featured-title { margin: 2px 0 8px; padding: 7px 11px; font-size: .66rem; }
+.achievement-grid .honor-achievement { font-weight: 900; }
+@keyframes champion-card-glow { 50% { border-color: #c7f06a; box-shadow: 0 0 30px rgba(199,240,106,.22), inset 0 0 20px rgba(255,208,116,.07); } }
+@keyframes champion-sweep { 0%,55% { transform: translateX(-65%); } 90%,100% { transform: translateX(65%); } }
+@keyframes champion-title-shimmer { to { background-position: -220% 0; } }
 .inline-admin-actions .danger { color: var(--danger); border-color: rgba(255,143,121,.3); }
 
 @media (min-width: 1000px) {
@@ -592,11 +604,27 @@ dialog strong { color: var(--ink); }
 #profile-card h3 { margin:0 0 5px; font:700 1.5rem "Fraunces",serif; }
 .profile-stats,.achievement-grid { display:flex; flex-wrap:wrap; gap:7px; margin:12px 0; }
 .profile-stats span,.achievement-grid span { padding:7px 9px; border:1px solid var(--line); border-radius:8px; font-size:.7rem; }
-.admin-deck-dialog { width:min(980px,calc(100% - 24px)); }
+.admin-deck-dialog { width:min(980px,calc(100% - 24px)); max-height:calc(100dvh - 24px); overflow-y:auto; }
 .inline-admin-login { display:grid; grid-template-columns:1fr auto; gap:9px; margin-top:15px; }
 .inline-admin-stats,.inline-admin-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
 .inline-admin-stats span { padding:8px 10px; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-size:.7rem; }
-.inline-admin-actions button,.inline-room-tools button { padding:7px 9px; border:1px solid var(--line); border-radius:7px; color:var(--ink); background:rgba(255,255,255,.05); cursor:pointer; }
+.inline-admin-actions button,.inline-room-tools button,.admin-user-actions button { min-height:38px; padding:7px 9px; border:1px solid var(--line); border-radius:7px; color:var(--ink); background:rgba(255,255,255,.05); cursor:pointer; }
+.inline-admin-actions button:disabled,.inline-room-tools button:disabled,.admin-user-actions button:disabled { cursor:not-allowed; opacity:.5; }
+.inline-admin-users { margin:20px 0 22px; padding-top:17px; border-top:1px solid var(--line); }
+.inline-admin-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:10px; }
+.inline-admin-section-head h3 { margin:0; font:700 1.25rem "Fraunces",serif; }
+.inline-admin-section-head p { margin:4px 0 0; color:var(--muted); font-size:.69rem; line-height:1.4; }
+.inline-admin-section-head > span { flex:0 0 auto; padding:7px 9px; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-size:.68rem; }
+.inline-admin-profile-status { min-height:18px; margin:0 0 8px; color:var(--gold); font-size:.7rem; }
+.inline-admin-user-list { display:grid; gap:8px; max-height:42vh; overflow-y:auto; overscroll-behavior:contain; padding-right:3px; }
+.inline-admin-user { display:grid; grid-template-columns:minmax(135px,1.25fr) repeat(3,minmax(68px,.55fr)) minmax(150px,1fr) auto; align-items:end; gap:8px; padding:11px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.025); }
+.inline-admin-user label { display:grid; min-width:0; gap:4px; }
+.inline-admin-user label > span { color:var(--muted); font-size:.58rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.inline-admin-user input,.inline-admin-user select { width:100%; min-width:0; min-height:40px; padding:8px 9px; border:1px solid var(--line); border-radius:7px; color:var(--ink); background:#0b1512; }
+.admin-user-actions { display:flex; gap:5px; }
+.admin-user-actions .danger { color:var(--danger); border-color:rgba(255,143,121,.28); }
+.inline-admin-empty { margin:0; padding:18px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); text-align:center; font-size:.75rem; }
+.inline-admin-actions + .inline-admin-users { margin-top:18px; }
 .inline-admin-rooms { display:grid; gap:9px; max-height:52vh; overflow:auto; }
 .inline-admin-room { padding:12px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.025); }
 .inline-admin-room header { display:flex; justify-content:space-between; align-items:center; gap:10px; }
@@ -618,6 +646,11 @@ dialog strong { color: var(--ink); }
   .room-actions { flex-wrap: wrap; justify-content: flex-end; }
   .room-actions .copy-button { padding-inline: 8px; }
   .profile-forms { grid-template-columns:1fr; }
+  .inline-admin-section-head { flex-direction:column; gap:8px; }
+  .inline-admin-user { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .admin-user-name,.admin-user-title,.admin-user-actions { grid-column:1 / -1; }
+  .admin-user-actions button { flex:1; min-height:44px; }
+  .inline-admin-user-list { max-height:none; }
 }
 
 @media (max-width: 420px) {
