@@ -1,5 +1,5 @@
 const $ = selector => document.querySelector(selector);
-const state = { mode: 'create', joinRole: 'player', code: null, playerId: null, sessionToken: null, rejoinCode: null, room: null, polling: null, acting: false, chatOpen: false, timelineOpen: false, chatSeen: null, celebratedWinner: null, seenReactions: new Set() };
+const state = { mode: 'create', joinRole: 'player', code: null, playerId: null, sessionToken: null, rejoinCode: null, profileToken: localStorage.getItem('dice-night:profile-token'), profile: null, room: null, polling: null, acting: false, chatOpen: false, timelineOpen: false, chatSeen: null, celebratedWinner: null, seenReactions: new Set() };
 let audioContext;
 let serverOffset = 0;
 
@@ -27,6 +27,44 @@ async function api(url, options = {}) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Something went wrong.');
   return data;
+}
+
+function renderProfile() {
+  const signedIn = Boolean(state.profile);
+  $('#profile-signed-out').classList.toggle('hidden', signedIn);
+  $('#profile-signed-in').classList.toggle('hidden', !signedIn);
+  if (!signedIn) {
+    $('#profile-strip').innerHTML = 'Playing as a guest. <button id="profile-strip-button" type="button">Save your stats</button>';
+    $('#profile-strip-button').addEventListener('click', () => $('#profile-dialog').showModal());
+    return;
+  }
+  $('#name-input').value = state.profile.displayName;
+  $('#profile-strip').innerHTML = `Level ${state.profile.level} <b>${escapeHtml(state.profile.displayName)}</b> · ${state.profile.stats.wins} wins <button id="profile-strip-button" type="button">View profile</button>`;
+  $('#profile-strip-button').addEventListener('click', () => $('#profile-dialog').showModal());
+  const stats = state.profile.stats;
+  $('#profile-card').innerHTML = `<h3>${escapeHtml(state.profile.displayName)} · Level ${state.profile.level}</h3><p>Profile code <b>${escapeHtml(state.profile.profileCode)}</b> · ${state.profile.xp} XP</p><div class="profile-stats"><span>${stats.games} games</span><span>${stats.wins} wins</span><span>${stats.totalRolls} rolls</span><span>${stats.totalBanked} banked</span><span>Best bank ${stats.bestBank}</span></div><div class="achievement-grid">${state.profile.achievements.length ? state.profile.achievements.map(item => `<span title="${escapeHtml(item.description || '')}">${item.icon || '◆'} ${escapeHtml(item.name || item.key)}</span>`).join('') : '<span>Play a match to unlock badges</span>'}</div>`;
+}
+
+async function loadProfile() {
+  if (!state.profileToken) { renderProfile(); return; }
+  try {
+    const data = await api('/api/profiles/me', { headers: { Authorization: `Bearer ${state.profileToken}` } });
+    state.profile = data.profile;
+  } catch {
+    state.profileToken = null;
+    state.profile = null;
+    localStorage.removeItem('dice-night:profile-token');
+  }
+  renderProfile();
+}
+
+function acceptProfile(data) {
+  state.profileToken = data.profileToken;
+  state.profile = data.profile;
+  localStorage.setItem('dice-night:profile-token', state.profileToken);
+  $('#profile-error').textContent = '';
+  renderProfile();
+  showToast(`Signed in as ${state.profile.displayName}`);
 }
 
 function saveSession() {
@@ -111,7 +149,7 @@ function showToast(message) {
 async function poll() {
   if (!state.code || !state.playerId || state.acting) return;
   try {
-    const { room } = await api(`/api/rooms/${state.code}?playerId=${encodeURIComponent(state.playerId)}&sessionToken=${encodeURIComponent(state.sessionToken)}`);
+    const { room } = await api(`/api/rooms/${state.code}?playerId=${encodeURIComponent(state.playerId)}`, { headers: { Authorization: `Bearer ${state.sessionToken}` } });
     if (!state.room || room.version !== state.room.version) {
       const oldMessage = state.room?.message;
       const rolled = oldMessage !== room.message && room.message.includes('rolled');
@@ -173,7 +211,7 @@ function render(room, animateRoll = false) {
   const admin = room.players.find(player => player.id === room.hostId);
   const visibleMessage = admin?.name ? room.message.split(admin.name).join('FALCON') : room.message;
   $('#status-message').textContent = visibleMessage;
-  $('#last-action-die').textContent = room.lastRoll ? `🎲 ${room.lastRoll}` : room.phase === 'lobby' ? 'READY' : 'PLAY';
+  $('#last-action-die').textContent = room.lastRollKind === 'risk' && room.lastReward ? `☠ +${room.lastReward}` : room.lastRoll ? `🎲 ${room.lastRoll}` : room.phase === 'lobby' ? 'READY' : 'PLAY';
   $('#game-error').textContent = '';
   renderChat(room);
   renderTimeline(room);
@@ -223,8 +261,8 @@ function render(room, animateRoll = false) {
     $('#streak-progress').textContent = room.nextBonusIn === 1 ? 'Next safe roll earns +10' : `${room.nextBonusIn ?? 3} rolls to +10 bonus`;
     $('#roll-button').disabled = room.paused || !myTurn || state.acting;
     $('#hold-button').disabled = room.paused || !myTurn || room.turnScore < 1 || state.acting;
-    $('#double-risk').textContent = `${room.doubleRisk ?? Math.min(75, (room.risk?.percent ?? 16) + 15)}% bust risk`;
-    $('#double-button').disabled = room.paused || !myTurn || room.turnScore < 10 || room.doubleUsed || state.acting;
+    $('#double-risk').textContent = `${room.riskDieRisk?.percent ?? 50}% bust · ${room.riskDieRisk?.skullFaces ?? 5} skulls`;
+    $('#double-button').disabled = room.paused || !myTurn || room.riskDieUsed || state.acting;
     const me = room.players.find(player => player.id === room.meId);
     $('#freeze-button').disabled = room.paused || !myTurn || !me || me.score < 5 || room.freezeUsed || room.players.length < 2 || state.acting;
     renderDice(room.lastRoll, animateRoll);
@@ -256,7 +294,7 @@ function render(room, animateRoll = false) {
 }
 
 function renderTimeline(room) {
-  const icons = { roll: '🎲', double: '×2', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', spectator_join: '◉', lobby: '↻', admin: '♛' };
+  const icons = { roll: '🎲', double: '×2', risk_die: '☠', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', spectator_join: '◉', lobby: '↻', admin: '♛' };
   const events = [...(room.events || [])].reverse();
   const roomHost = room.players.find(player => player.id === room.hostId);
   $('#timeline-events').innerHTML = events.length ? events.map(item => {
@@ -336,17 +374,17 @@ setInterval(updateTurnTimer, 100);
 async function doAction(type, targetId) {
   if (state.acting) return;
   state.acting = true;
-  if (type === 'roll' || type === 'double') playSound('roll');
+  if (type === 'roll' || type === 'double' || type === 'risk_die') playSound('roll');
   if (state.room) render(state.room);
   try {
     const { room } = await api(`/api/rooms/${state.code}/action`, {
       method: 'POST', body: JSON.stringify({ playerId: state.playerId, sessionToken: state.sessionToken, type, targetId })
     });
-    const animate = type === 'roll' || type === 'double';
+    const animate = type === 'roll' || type === 'double' || type === 'risk_die';
     state.room = room;
     state.acting = false;
     render(room, animate);
-    if (type === 'roll' || type === 'double') playSound(room.lastRoll === 1 ? 'bust' : 'safe');
+    if (type === 'roll' || type === 'double' || type === 'risk_die') playSound(room.lastRoll === 1 ? 'bust' : 'safe');
     if (type === 'hold' && room.phase !== 'finished') playSound('bank');
     if (type === 'freeze') playSound('bank');
   } catch (error) {
@@ -374,8 +412,8 @@ $('#entry-form').addEventListener('submit', async event => {
   $('#entry-error').textContent = '';
   try {
     const data = state.mode === 'create'
-      ? await api('/api/rooms', { method: 'POST', body: JSON.stringify({ name }) })
-      : await api(`/api/rooms/${code}/join`, { method: 'POST', body: JSON.stringify({ name, role: state.joinRole, rejoinCode }) });
+      ? await api('/api/rooms', { method: 'POST', body: JSON.stringify({ name, profileToken: state.profileToken }) })
+      : await api(`/api/rooms/${code}/join`, { method: 'POST', body: JSON.stringify({ name, role: state.joinRole, rejoinCode, profileToken: state.profileToken }) });
     state.playerId = data.playerId;
     state.sessionToken = data.sessionToken;
     state.rejoinCode = data.rejoinCode;
@@ -395,7 +433,7 @@ $('#mode-picker').addEventListener('click', event => {
 });
 $('#roll-button').addEventListener('click', () => doAction('roll'));
 $('#hold-button').addEventListener('click', () => doAction('hold'));
-$('#double-button').addEventListener('click', () => doAction('double'));
+$('#double-button').addEventListener('click', () => doAction('risk_die'));
 $('#freeze-button').addEventListener('click', () => {
   const targets = state.room.players.filter(player => player.id !== state.playerId);
   $('#freeze-targets').innerHTML = targets.map(player => `<button data-player-id="${escapeHtml(player.id)}" ${player.frozen ? 'disabled' : ''}>❄ ${escapeHtml(player.id === state.room.hostId ? 'FALCON' : player.name)}${player.frozen ? ' · already frozen' : ''}</button>`).join('');
@@ -480,6 +518,119 @@ $('#chat-form').addEventListener('submit', async event => {
   }
 });
 
+let inlineAdminToken = sessionStorage.getItem('dice-night-admin') || '';
+
+async function inlineAdminApi(url, options = {}) {
+  return api(url, { ...options, headers: { Authorization: `Bearer ${inlineAdminToken}`, ...(options.headers || {}) } });
+}
+
+function inlineAdminRoom(room) {
+  const mainAction = room.phase === 'playing' ? (room.paused ? 'resume' : 'pause') : room.phase === 'finished' ? 'reset' : 'force_start';
+  const players = room.players.map(player => `<div class="inline-room-tools"><b>${escapeHtml(player.name)}</b><span>${player.score} pts</span><button data-score="-5" data-player="${player.id}">-5</button><button data-score="5" data-player="${player.id}">+5</button>${player.id === room.hostId ? '' : `<button class="danger" data-remove="${player.id}">Remove</button>`}</div>`).join('');
+  return `<article class="inline-admin-room" data-admin-room="${room.code}"><header><div><b>${room.code}</b> · ${room.phase}${room.paused ? ' · paused' : ''}</div><span>${room.players.length}/9</span></header>${players}<div class="inline-room-tools"><button data-admin-action="${mainAction}">${mainAction.replace('_', ' ')}</button><select data-admin-timer>${[5,7,10,15,20,30,45,60].map(value => `<option value="${value}" ${room.turnDurationMs === value * 1000 ? 'selected' : ''}>${value} sec</option>`).join('')}</select><button data-admin-action="clear_chat">Clear chat</button><button data-admin-action="reset">Reset</button><button class="danger" data-admin-action="close">Close room</button></div></article>`;
+}
+
+async function refreshInlineAdmin() {
+  const roomData = await inlineAdminApi('/api/admin/rooms');
+  let records = { summary: { matches: 0 } };
+  try { records = await inlineAdminApi('/api/admin/records?limit=1'); } catch { /* Records appear after the server update. */ }
+  $('#inline-room-total').textContent = roomData.rooms.length;
+  $('#inline-player-total').textContent = roomData.rooms.reduce((sum, room) => sum + room.players.length, 0);
+  $('#inline-match-total').textContent = records.summary.matches || 0;
+  $('#inline-admin-rooms').innerHTML = roomData.rooms.length ? roomData.rooms.map(inlineAdminRoom).join('') : '<p>No active rooms.</p>';
+  $('#inline-admin-login').classList.add('hidden');
+  $('#inline-admin-content').classList.remove('hidden');
+  $('#inline-admin-error').textContent = '';
+}
+
+async function inlineAdminAction(code, type, extra = {}) {
+  await inlineAdminApi(`/api/admin/rooms/${code}`, { method: 'POST', body: JSON.stringify({ type, ...extra }) });
+  await refreshInlineAdmin();
+}
+
+$('#admin-deck-button').addEventListener('click', async () => {
+  $('#admin-deck-dialog').showModal();
+  if (inlineAdminToken) {
+    try { await refreshInlineAdmin(); } catch { $('#inline-admin-login').classList.remove('hidden'); }
+  }
+});
+$('#close-admin-deck').addEventListener('click', () => $('#admin-deck-dialog').close());
+$('#inline-admin-login').addEventListener('submit', async event => {
+  event.preventDefault();
+  inlineAdminToken = $('#inline-admin-token').value.trim();
+  try {
+    await refreshInlineAdmin();
+    sessionStorage.setItem('dice-night-admin', inlineAdminToken);
+  } catch (error) { $('#inline-admin-error').textContent = 'That admin key did not work.'; }
+});
+$('#inline-admin-refresh').addEventListener('click', () => refreshInlineAdmin().catch(error => { $('#inline-admin-error').textContent = error.message; }));
+$('#inline-admin-lock').addEventListener('click', () => {
+  inlineAdminToken = '';
+  sessionStorage.removeItem('dice-night-admin');
+  $('#inline-admin-content').classList.add('hidden');
+  $('#inline-admin-login').classList.remove('hidden');
+});
+$('#inline-admin-export').addEventListener('click', async () => {
+  try {
+    const response = await fetch('/api/admin/records.csv', { headers: { Authorization: `Bearer ${inlineAdminToken}` } });
+    if (!response.ok) throw new Error('Export is unavailable until PostgreSQL is connected.');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = 'dice-night-match-records.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error) { showToast(error.message); }
+});
+$('#inline-admin-rooms').addEventListener('click', async event => {
+  const room = event.target.closest('[data-admin-room]');
+  if (!room) return;
+  const type = event.target.dataset.adminAction;
+  const playerId = event.target.dataset.player;
+  const removeId = event.target.dataset.remove;
+  try {
+    if (type) {
+      if ((type === 'reset' || type === 'close') && !confirm(`${type} room ${room.dataset.adminRoom}?`)) return;
+      await inlineAdminAction(room.dataset.adminRoom, type);
+    } else if (playerId) {
+      await inlineAdminAction(room.dataset.adminRoom, 'score', { playerId, delta: Number(event.target.dataset.score) });
+    } else if (removeId && confirm('Remove this player?')) {
+      await inlineAdminAction(room.dataset.adminRoom, 'remove_player', { playerId: removeId });
+    }
+  } catch (error) { showToast(error.message); }
+});
+$('#inline-admin-rooms').addEventListener('change', event => {
+  if (!event.target.matches('[data-admin-timer]')) return;
+  const room = event.target.closest('[data-admin-room]');
+  inlineAdminAction(room.dataset.adminRoom, 'set_timer', { seconds: Number(event.target.value) }).catch(error => showToast(error.message));
+});
+
+$('#profile-button').addEventListener('click', () => $('#profile-dialog').showModal());
+$('#close-profile').addEventListener('click', () => $('#profile-dialog').close());
+for (const id of ['profile-pin', 'login-pin']) {
+  $(`#${id}`).addEventListener('input', event => { event.target.value = event.target.value.replace(/\D/g, '').slice(0, 6); });
+}
+$('#profile-code').addEventListener('input', event => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 8); });
+$('#create-profile-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('#profile-error').textContent = '';
+  try {
+    acceptProfile(await api('/api/profiles', { method: 'POST', body: JSON.stringify({ displayName: $('#profile-name').value, pin: $('#profile-pin').value }) }));
+  } catch (error) { $('#profile-error').textContent = error.message; }
+});
+$('#login-profile-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('#profile-error').textContent = '';
+  try {
+    acceptProfile(await api('/api/profiles/login', { method: 'POST', body: JSON.stringify({ code: $('#profile-code').value, pin: $('#login-pin').value }) }));
+  } catch (error) { $('#profile-error').textContent = error.message; }
+});
+$('#profile-logout').addEventListener('click', () => {
+  state.profileToken = null;
+  state.profile = null;
+  localStorage.removeItem('dice-night:profile-token');
+  renderProfile();
+});
+
 $('#how-button').addEventListener('click', () => $('#rules-dialog').showModal());
 $('#close-rules').addEventListener('click', () => $('#rules-dialog').close());
 $('#updates-button').addEventListener('click', () => $('#updates-dialog').showModal());
@@ -497,12 +648,12 @@ $('#updates-dialog').addEventListener('click', event => {
 
 function dismissRoyaleIntro() {
   $('#royale-intro').classList.add('leaving');
-  try { sessionStorage.setItem('dice-night:intro-v3', 'seen'); } catch { /* Session storage is optional. */ }
+  try { sessionStorage.setItem('dice-night:intro-v31', 'seen'); } catch { /* Session storage is optional. */ }
   playSound('bank');
 }
 
 try {
-  if (sessionStorage.getItem('dice-night:intro-v3') === 'seen') $('#royale-intro').classList.add('leaving');
+  if (sessionStorage.getItem('dice-night:intro-v31') === 'seen') $('#royale-intro').classList.add('leaving');
 } catch { /* Show the intro when session storage is unavailable. */ }
 
 $('#enter-royale').addEventListener('click', dismissRoyaleIntro);
@@ -510,6 +661,8 @@ $('#intro-updates').addEventListener('click', () => {
   dismissRoyaleIntro();
   $('#updates-dialog').showModal();
 });
+
+loadProfile();
 
 (async function restoreOrPrefill() {
   const code = new URLSearchParams(location.search).get('room')?.toUpperCase();
@@ -522,7 +675,7 @@ $('#intro-updates').addEventListener('click', () => {
       state.playerId = savedSession.playerId;
       state.sessionToken = savedSession.sessionToken;
       state.rejoinCode = savedSession.rejoinCode;
-      const { room } = await api(`/api/rooms/${code}?playerId=${encodeURIComponent(state.playerId)}&sessionToken=${encodeURIComponent(state.sessionToken)}`);
+      const { room } = await api(`/api/rooms/${code}?playerId=${encodeURIComponent(state.playerId)}`, { headers: { Authorization: `Bearer ${state.sessionToken}` } });
       enterGame(room);
       return;
     } catch {

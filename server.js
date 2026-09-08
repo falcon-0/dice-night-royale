@@ -2,6 +2,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { createPostgresStore } = require('./database');
+const { ProfileService } = require('./profiles');
 
 const PORT = Number(process.env.PORT) || 4173;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -20,6 +22,9 @@ const ADMIN_ENABLED = process.env.ENABLE_ADMIN === '1';
 const rooms = new Map();
 const retiredRooms = new Set();
 const publicDir = path.join(__dirname, 'public');
+const database = createPostgresStore();
+const profiles = new ProfileService(database);
+const authAttempts = new Map();
 
 function loadAdminToken() {
   if (process.env.ADMIN_TOKEN) return process.env.ADMIN_TOKEN;
@@ -37,6 +42,12 @@ function loadAdminToken() {
 const ADMIN_TOKEN = ADMIN_ENABLED ? loadAdminToken() : '';
 
 function persistRooms() {
+  if (database.enabled) {
+    database.queueSnapshot([...rooms.values()], [...retiredRooms]).catch(error => {
+      console.error('Could not save rooms to PostgreSQL:', error.message);
+    });
+    return;
+  }
   try {
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify([...rooms.values()], null, 2));
@@ -46,21 +57,29 @@ function persistRooms() {
 }
 
 function persistRetiredRooms() {
+  if (database.enabled) {
+    database.queueSnapshot([...rooms.values()], [...retiredRooms]).catch(error => {
+      console.error('Could not save retired rooms to PostgreSQL:', error.message);
+    });
+    return;
+  }
   fs.mkdirSync(path.dirname(RETIRED_FILE), { recursive: true });
   fs.writeFileSync(RETIRED_FILE, JSON.stringify([...retiredRooms], null, 2));
 }
 
-function loadRooms() {
-  try {
-    const saved = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    for (const room of saved) {
-      if (room?.code && Array.isArray(room.players) && room.updatedAt > cutoff) {
+function loadSavedRooms(saved) {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const room of saved) {
+    if (room?.code && Array.isArray(room.players) && room.updatedAt > cutoff) {
         room.rollStreak ??= 0;
         room.doubleUsed ??= false;
+        room.lastRollKind ??= 'normal';
+        room.lastReward ??= null;
         room.freezeUsed ??= false;
         room.schemaVersion = 3;
         room.matchId ??= 0;
+        room.matchStartedAt ??= null;
+        room.matchArchived ??= room.phase !== 'finished';
         room.paused ??= false;
         room.turnDurationMs ??= TURN_MS;
         room.mode = MODES[room.mode] ? room.mode : 'classic';
@@ -74,6 +93,8 @@ function loadRooms() {
           player.stats ??= { rolls: 0, busts: 0, bestBank: 0 };
           player.ready ??= player.id === room.hostId;
           player.career ??= { games: 0, wins: 0, totalBanked: 0 };
+          player.matchBanked ??= 0;
+          player.matchFreezes ??= 0;
           player.sessionToken ??= crypto.randomBytes(24).toString('base64url');
           player.rejoinCode ??= String(crypto.randomInt(100000, 1000000));
         });
@@ -83,8 +104,13 @@ function loadRooms() {
         });
         room.turnDeadline = room.phase === 'playing' && !room.paused ? Date.now() + room.turnDurationMs : null;
         rooms.set(room.code, room);
-      }
     }
+  }
+}
+
+function loadRooms() {
+  try {
+    loadSavedRooms(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
   } catch (error) {
     if (error.code !== 'ENOENT') console.error('Could not load saved rooms:', error.message);
   }
@@ -98,8 +124,25 @@ function loadRetiredRooms() {
   }
 }
 
-loadRooms();
-loadRetiredRooms();
+if (!database.enabled) {
+  loadRooms();
+  loadRetiredRooms();
+}
+
+async function initializeStorage() {
+  if (database.enabled) {
+    const saved = await database.initialize();
+    loadSavedRooms(saved.rooms);
+    for (const code of saved.retiredRooms) retiredRooms.add(String(code).toUpperCase());
+    console.log(`PostgreSQL connected: restored ${rooms.size} active room${rooms.size === 1 ? '' : 's'}`);
+  }
+  await profiles.initialize();
+  for (const room of rooms.values()) {
+    if (room.phase === 'finished' && !room.matchArchived) {
+      archiveCompletedMatch(room).catch(error => console.error('Could not reconcile completed match:', error.message));
+    }
+  }
+}
 
 function roomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -122,6 +165,20 @@ function modeFor(room) {
   return MODES[room.mode] || MODES.classic;
 }
 
+async function archiveCompletedMatch(room) {
+  if (room.phase !== 'finished' || room.matchArchived) return;
+  const completed = JSON.parse(JSON.stringify({ ...room, targetScore: modeFor(room).targetScore }));
+  await database.recordMatch(completed);
+  await profiles.completeMatch(completed);
+  const liveRoom = rooms.get(completed.code);
+  if (!liveRoom || liveRoom.matchId !== completed.matchId || liveRoom.phase !== 'finished') return;
+  for (const player of liveRoom.players) {
+    if (player.profileId) player.profile = profileSummary(await profiles.byId(player.profileId));
+  }
+  liveRoom.matchArchived = true;
+  persistRooms();
+}
+
 function identitySecrets() {
   return {
     sessionToken: crypto.randomBytes(24).toString('base64url'),
@@ -134,14 +191,24 @@ function addEvent(room, type, text, details = {}) {
   room.events = room.events.slice(-80);
 }
 
-function addSpectator(room, name) {
-  const spectator = { id: crypto.randomUUID(), name, ...identitySecrets(), joinedAt: Date.now() };
+function profileSummary(profile) {
+  if (!profile) return null;
+  return {
+    id: profile.id,
+    profileCode: profile.profileCode,
+    level: profile.level,
+    achievements: (profile.achievements || []).slice(-3).map(item => ({ key: item.key, name: item.name, icon: item.icon }))
+  };
+}
+
+function addSpectator(room, name, profile = null) {
+  const spectator = { id: crypto.randomUUID(), name, profileId: profile?.id || null, profile: profileSummary(profile), ...identitySecrets(), joinedAt: Date.now() };
   room.spectators.push(spectator);
   room.updatedAt = Date.now();
   return spectator;
 }
 
-function addPlayer(room, name) {
+function addPlayer(room, name, profile = null) {
   const player = {
     id: crypto.randomUUID(),
     name,
@@ -151,6 +218,10 @@ function addPlayer(room, name) {
     stats: { rolls: 0, busts: 0, bestBank: 0 },
     ready: false,
     career: { games: 0, wins: 0, totalBanked: 0 },
+    matchBanked: 0,
+    matchFreezes: 0,
+    profileId: profile?.id || null,
+    profile: profileSummary(profile),
     ...identitySecrets(),
     joinedAt: Date.now()
   };
@@ -159,12 +230,14 @@ function addPlayer(room, name) {
   return player;
 }
 
-function createRoom(name) {
+function createRoom(name, profile = null) {
   const code = roomCode();
   const room = {
     code,
     schemaVersion: 3,
     matchId: 0,
+    matchStartedAt: null,
+    matchArchived: true,
     hostId: null,
     players: [],
     spectators: [],
@@ -179,6 +252,8 @@ function createRoom(name) {
     turnDurationMs: TURN_MS,
     turnDeadline: null,
     lastRoll: null,
+    lastRollKind: 'normal',
+    lastReward: null,
     winnerId: null,
     message: 'Waiting for players',
     chat: [],
@@ -187,7 +262,7 @@ function createRoom(name) {
     version: 1,
     updatedAt: Date.now()
   };
-  const player = addPlayer(room, name);
+  const player = addPlayer(room, name, profile);
   room.hostId = player.id;
   player.ready = true;
   rooms.set(code, room);
@@ -201,6 +276,25 @@ function riskFor(room, extra = 0) {
     percent: Math.min(75, mode.riskStart + (room.rollStreak || 0) * mode.riskStep + extra),
     penalty: 5
   };
+}
+
+function riskDieFor(room) {
+  const rewardFaces = 5;
+  const skullFaces = Math.min(8, 5 + Math.floor((room.rollStreak || 0) / 2));
+  return {
+    percent: Math.round((skullFaces / (rewardFaces + skullFaces)) * 100),
+    skullFaces,
+    rewardFaces,
+    penalty: 5
+  };
+}
+
+function riskDieOutcome(room, randomInt = crypto.randomInt) {
+  const risk = riskDieFor(room);
+  const busted = randomInt(risk.skullFaces + risk.rewardFaces) < risk.skullFaces;
+  if (busted) return { busted: true, reward: 0, risk };
+  const rewards = [10, 10, 20, 20, 30];
+  return { busted: false, reward: rewards[randomInt(rewards.length)], risk };
 }
 
 function applySafeRoll(room, roll) {
@@ -260,8 +354,8 @@ function publicState(room, playerId) {
     phase: room.phase,
     hostId: room.hostId,
     meId: playerId,
-    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career }) => ({ id, name, score, shieldAvailable, frozen, stats, ready, career })),
-    spectators: (room.spectators || []).map(({ id, name }) => ({ id, name })),
+    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile }) => ({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile })),
+    spectators: (room.spectators || []).map(({ id, name, profile }) => ({ id, name, profile })),
     meRole: room.players.some(player => player.id === playerId) ? 'player' : 'spectator',
     meRejoinCode: [...room.players, ...(room.spectators || [])].find(person => person.id === playerId)?.rejoinCode || null,
     mode: modeFor(room),
@@ -270,7 +364,9 @@ function publicState(room, playerId) {
     rollStreak: room.rollStreak || 0,
     risk: riskFor(room),
     doubleRisk: riskFor(room, 15).percent,
+    riskDieRisk: riskDieFor(room),
     doubleUsed: room.doubleUsed || false,
+    riskDieUsed: room.doubleUsed || false,
     freezeUsed: room.freezeUsed || false,
     paused: room.paused || false,
     turnDurationMs: room.turnDurationMs || TURN_MS,
@@ -278,6 +374,8 @@ function publicState(room, playerId) {
     turnDeadline: room.turnDeadline,
     serverNow: Date.now(),
     lastRoll: room.lastRoll,
+    lastRollKind: room.lastRollKind || 'normal',
+    lastReward: room.lastReward || null,
     winnerId: room.winnerId,
     message: room.message,
     chat: (room.chat || []).map(({ id, playerId: senderId, name, text, at }) => ({ id, playerId: senderId, name, text, at })),
@@ -302,6 +400,19 @@ function secureEqual(expected, supplied) {
   const left = Buffer.from(String(expected || ''));
   const right = Buffer.from(String(supplied || ''));
   return left.length === right.length && left.length > 0 && crypto.timingSafeEqual(left, right);
+}
+
+function bearerToken(req) {
+  return String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+}
+
+function throttleAuth(req, scope) {
+  const now = Date.now();
+  const key = `${scope}:${req.socket.remoteAddress || 'unknown'}`;
+  const recent = (authAttempts.get(key) || []).filter(at => now - at < 5 * 60 * 1000);
+  if (recent.length >= 8) throw Object.assign(new Error('Too many login attempts. Wait five minutes.'), { status: 429 });
+  recent.push(now);
+  authAttempts.set(key, recent);
 }
 
 function requireMember(room, playerId, sessionToken) {
@@ -380,7 +491,13 @@ function action(room, playerId, type, targetId) {
     if (!room.players.every(player => player.ready)) throw Object.assign(new Error('Every player must be ready.'), { status: 409 });
     room.phase = 'playing';
     room.matchId = (room.matchId || 0) + 1;
+    room.matchStartedAt = Date.now();
+    room.matchArchived = false;
     room.events = [];
+    room.players.forEach(candidate => {
+      candidate.matchBanked = 0;
+      candidate.matchFreezes = 0;
+    });
     room.turnIndex = Math.floor(Math.random() * room.players.length);
     room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
     room.message = `${room.players[room.turnIndex].name} goes first`;
@@ -398,6 +515,8 @@ function action(room, playerId, type, targetId) {
       player.shieldAvailable = true;
       player.frozen = false;
       player.stats = { rolls: 0, busts: 0, bestBank: 0 };
+      player.matchBanked = 0;
+      player.matchFreezes = 0;
       player.ready = false;
     });
     room.phase = 'lobby';
@@ -408,6 +527,8 @@ function action(room, playerId, type, targetId) {
     room.freezeUsed = false;
     room.turnDeadline = null;
     room.lastRoll = null;
+    room.lastRollKind = 'normal';
+    room.lastReward = null;
     room.winnerId = null;
     room.message = 'New round ready — everyone tap Ready';
     room.events = [];
@@ -429,6 +550,7 @@ function action(room, playerId, type, targetId) {
     if (room.freezeUsed) throw Object.assign(new Error('You already used Freeze this turn.'), { status: 409 });
     if (target.frozen) throw Object.assign(new Error(`${target.name} is already frozen.`), { status: 409 });
     player.score -= 5;
+    player.matchFreezes = (player.matchFreezes || 0) + 1;
     target.frozen = true;
     room.freezeUsed = true;
     room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
@@ -439,17 +561,21 @@ function action(room, playerId, type, targetId) {
     return;
   }
 
-  if (type === 'roll' || type === 'double') {
+  if (type === 'roll' || type === 'double' || type === 'risk_die') {
     const doubled = type === 'double';
+    const risky = type === 'risk_die';
     if (doubled && room.turnScore < 10) throw Object.assign(new Error('Build a pot of 10 before a Double Roll.'), { status: 409 });
-    if (doubled && room.doubleUsed) throw Object.assign(new Error('You already used your Double Roll this turn.'), { status: 409 });
-    const risk = riskFor(room, doubled ? 15 : 0);
-    const busted = crypto.randomInt(100) < risk.percent;
-    const roll = busted ? 1 : crypto.randomInt(2, 7);
-    room.lastRoll = roll;
+    if ((doubled || risky) && room.doubleUsed) throw Object.assign(new Error('You already used your Risk Die this turn.'), { status: 409 });
+    const riskOutcome = risky ? riskDieOutcome(room) : null;
+    const risk = riskOutcome?.risk || riskFor(room, doubled ? 15 : 0);
+    const busted = risky ? riskOutcome.busted : crypto.randomInt(100) < risk.percent;
+    const roll = busted ? 1 : risky ? riskOutcome.reward : crypto.randomInt(2, 7);
+    room.lastRoll = busted ? 1 : risky ? 6 : roll;
+    room.lastRollKind = risky ? 'risk' : doubled ? 'double' : 'normal';
+    room.lastReward = risky && !busted ? roll : null;
     player.stats ??= { rolls: 0, busts: 0, bestBank: 0 };
     player.stats.rolls += 1;
-    if (doubled) room.doubleUsed = true;
+    if (doubled || risky) room.doubleUsed = true;
     if (busted) {
       player.stats.busts += 1;
       const shielded = player.shieldAvailable;
@@ -460,17 +586,19 @@ function action(room, playerId, type, targetId) {
         player.score -= risk.penalty;
         nextTurn(room, `${player.name} BUSTED — pot lost and −${risk.penalty} points!`);
       }
-      addEvent(room, 'bust', room.message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, doubled });
+      addEvent(room, 'bust', room.message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, doubled, risky });
     } else {
       const points = doubled ? roll * 2 : roll;
       const bonus = applySafeRoll(room, points);
       room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
-      room.message = doubled
+      room.message = risky
+        ? `${player.name} hit the Risk Die for ${points} points!${bonus ? ' + 10 HOT STREAK!' : ''}`
+        : doubled
         ? `${player.name} doubled ${roll} into ${points} points!${bonus ? ' + 10 HOT STREAK!' : ''}`
         : bonus
         ? `${player.name} hit a HOT STREAK — ${roll} + 10 bonus!`
         : `${player.name} rolled ${roll} — risk is climbing`;
-      addEvent(room, bonus ? 'hot_streak' : doubled ? 'double' : 'roll', room.message, { actorId: player.id, die: roll, points, bonus });
+      addEvent(room, bonus ? 'hot_streak' : risky ? 'risk_die' : doubled ? 'double' : 'roll', room.message, { actorId: player.id, die: roll, points, bonus, risky });
     }
     bump(room);
     persistRooms();
@@ -485,6 +613,7 @@ function action(room, playerId, type, targetId) {
     player.stats.bestBank = Math.max(player.stats.bestBank, banked);
     player.career ??= { games: 0, wins: 0, totalBanked: 0 };
     player.career.totalBanked += banked;
+    player.matchBanked = (player.matchBanked || 0) + banked;
     if (player.score >= modeFor(room).targetScore) {
       room.phase = 'finished';
       room.winnerId = player.id;
@@ -496,13 +625,18 @@ function action(room, playerId, type, targetId) {
         candidate.career.games += 1;
       });
       player.career.wins += 1;
-      addEvent(room, 'win', room.message, { actorId: player.id, score: player.score, matchId: room.matchId });
+      addEvent(room, 'win', room.message, { actorId: player.id, score: player.score, amount: banked, matchId: room.matchId });
     } else {
       nextTurn(room, `${player.name} banked ${banked} points`);
       addEvent(room, 'bank', room.message, { actorId: player.id, amount: banked, score: player.score });
     }
     bump(room);
     persistRooms();
+    if (room.phase === 'finished') {
+      archiveCompletedMatch(room).catch(error => {
+        console.error('Could not record completed match:', error.message);
+      });
+    }
     return;
   }
 
@@ -515,6 +649,8 @@ function resetMatch(room) {
     player.shieldAvailable = true;
     player.frozen = false;
     player.stats = { rolls: 0, busts: 0, bestBank: 0 };
+    player.matchBanked = 0;
+    player.matchFreezes = 0;
     player.ready = false;
   });
   room.phase = 'lobby';
@@ -526,6 +662,8 @@ function resetMatch(room) {
   room.freezeUsed = false;
   room.turnDeadline = null;
   room.lastRoll = null;
+  room.lastRollKind = 'normal';
+  room.lastReward = null;
   room.winnerId = null;
   room.message = 'Match reset by FALCON — ready when you are';
   room.events = [];
@@ -543,9 +681,10 @@ function adminRoomState(room) {
       shieldAvailable: player.shieldAvailable,
       stats: player.stats,
       ready: player.ready,
-      career: player.career
+      career: player.career,
+      profile: player.profile
     })),
-    spectators: (room.spectators || []).map(({ id, name }) => ({ id, name }))
+    spectators: (room.spectators || []).map(({ id, name, profile }) => ({ id, name, profile }))
   };
 }
 
@@ -629,7 +768,7 @@ function adminAction(room, type, payload = {}) {
 }
 
 function isAdminRequest(req) {
-  const supplied = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const supplied = bearerToken(req);
   const expected = Buffer.from(ADMIN_TOKEN);
   const actual = Buffer.from(supplied);
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
@@ -639,6 +778,30 @@ function sendJson(res, status, data) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store'
+  });
+  res.end(body);
+}
+
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  let normalized = value instanceof Date ? value.toISOString() : String(value);
+  if (typeof value === 'string' && /^[=+\-@]/.test(normalized)) normalized = `'${normalized}`;
+  return /[",\r\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
+}
+
+function sendCsv(res, filename, rows) {
+  const fields = rows.length ? Object.keys(rows[0]) : [
+    'match_record_id', 'room_code', 'match_number', 'mode', 'target_score', 'started_at',
+    'ended_at', 'winner_name', 'winner_score', 'player_id', 'player_name', 'final_score',
+    'rolls', 'busts', 'best_bank', 'banked_points', 'freezes_used', 'is_winner'
+  ];
+  const lines = [fields.map(csvCell).join(','), ...rows.map(row => fields.map(field => csvCell(row[field])).join(','))];
+  const body = `\uFEFF${lines.join('\r\n')}`;
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`,
     'Content-Length': Buffer.byteLength(body),
     'Cache-Control': 'no-store'
   });
@@ -687,12 +850,38 @@ const server = http.createServer(async (req, res) => {
     const parts = url.pathname.split('/').filter(Boolean);
 
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return sendJson(res, 200, { ok: true, rooms: rooms.size });
+      return sendJson(res, 200, { ok: true, rooms: rooms.size, storage: database.enabled ? 'postgresql' : 'json' });
+    }
+
+    if (parts[0] === 'api' && parts[1] === 'profiles') {
+      if (req.method === 'POST' && parts.length === 2) {
+        throttleAuth(req, 'profile-create');
+        const { displayName, pin } = await readJson(req);
+        return sendJson(res, 201, await profiles.create(displayName, pin));
+      }
+      if (req.method === 'POST' && parts[2] === 'login' && parts.length === 3) {
+        throttleAuth(req, 'profile-login');
+        const { code, pin } = await readJson(req);
+        return sendJson(res, 200, await profiles.login(code, pin));
+      }
+      if (req.method === 'GET' && parts[2] === 'me' && parts.length === 3) {
+        const profile = await profiles.authenticate(bearerToken(req));
+        if (!profile) return sendJson(res, 401, { error: 'Sign in to a profile first.' });
+        return sendJson(res, 200, { profile });
+      }
+      return sendJson(res, 404, { error: 'Profile route not found.' });
     }
 
     if (parts[0] === 'api' && parts[1] === 'admin') {
       if (!ADMIN_ENABLED) return sendJson(res, 404, { error: 'Not found.' });
       if (!isAdminRequest(req)) return sendJson(res, 401, { error: 'Invalid admin key.' });
+      if (req.method === 'GET' && parts[2] === 'records' && parts.length === 3) {
+        return sendJson(res, 200, await database.records(url.searchParams.get('limit')));
+      }
+      if (req.method === 'GET' && parts[2] === 'records.csv' && parts.length === 3) {
+        const rows = await database.accessRows(url.searchParams.get('limit'));
+        return sendCsv(res, 'dice-night-match-records.csv', rows);
+      }
       if (req.method === 'GET' && parts[2] === 'rooms' && parts.length === 3) {
         return sendJson(res, 200, { rooms: [...rooms.values()].map(adminRoomState) });
       }
@@ -715,10 +904,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/rooms') {
-      const { name } = await readJson(req);
-      const cleaned = cleanName(name);
+      const { name, profileToken } = await readJson(req);
+      const profile = await profiles.authenticate(profileToken);
+      const cleaned = cleanName(profile?.displayName || name);
       if (!cleaned) return sendJson(res, 400, { error: 'Enter your name.' });
-      const { room, player } = createRoom(cleaned);
+      const { room, player } = createRoom(cleaned, profile);
       return sendJson(res, 201, { playerId: player.id, sessionToken: player.sessionToken, rejoinCode: player.rejoinCode, room: publicState(room, player.id) });
     }
 
@@ -730,16 +920,20 @@ const server = http.createServer(async (req, res) => {
       if (!room && !restoring) return sendJson(res, 404, { error: 'Room not found. Check the code.' });
 
       if (req.method === 'POST' && parts[3] === 'join') {
-        const { name, role, rejoinCode } = await readJson(req);
-        const cleaned = cleanName(name);
+        const { name, role, rejoinCode, profileToken } = await readJson(req);
+        const profile = await profiles.authenticate(profileToken);
+        const cleaned = cleanName(profile?.displayName || name);
         if (!cleaned) return sendJson(res, 400, { error: 'Enter your name.' });
         const everyone = [...room.players, ...(room.spectators || [])];
         const returning = everyone.find(person => person.name.toLowerCase() === cleaned.toLowerCase());
         if (returning) {
-          if (!secureEqual(returning.rejoinCode, rejoinCode)) {
+          const profileOwnsSeat = profile && returning.profileId === profile.id;
+          if (!profileOwnsSeat && !secureEqual(returning.rejoinCode, rejoinCode)) {
+            throttleAuth(req, 'room-rejoin');
             return sendJson(res, 401, { error: 'That name is saved. Enter its private 6-digit rejoin key.' });
           }
           returning.sessionToken = crypto.randomBytes(24).toString('base64url');
+          if (profileOwnsSeat) returning.profile = profileSummary(profile);
           const spectatorIndex = (room.spectators || []).findIndex(person => person.id === returning.id);
           if (role === 'player' && room.phase === 'lobby' && spectatorIndex >= 0) {
             if (room.players.length >= MAX_PLAYERS) return sendJson(res, 409, { error: 'The player table is full.' });
@@ -760,7 +954,7 @@ const server = http.createServer(async (req, res) => {
         const asSpectator = role === 'spectator' || room.phase !== 'lobby';
         if (asSpectator) {
           if ((room.spectators || []).length >= MAX_SPECTATORS) return sendJson(res, 409, { error: 'The spectator gallery is full.' });
-          const spectator = addSpectator(room, cleaned);
+          const spectator = addSpectator(room, cleaned, profile);
           room.message = `${cleaned} joined the gallery`;
           addEvent(room, 'spectator_join', room.message, { actorId: spectator.id });
           bump(room);
@@ -768,7 +962,10 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 200, { playerId: spectator.id, sessionToken: spectator.sessionToken, rejoinCode: spectator.rejoinCode, room: publicState(room, spectator.id) });
         }
         if (room.players.length >= MAX_PLAYERS) return sendJson(res, 409, { error: 'The player table is full. Join as a spectator.' });
-        const player = addPlayer(room, cleaned);
+        if (profile && room.players.some(candidate => candidate.profileId === profile.id)) {
+          return sendJson(res, 409, { error: 'This profile already has a seat in the room.' });
+        }
+        const player = addPlayer(room, cleaned, profile);
         room.players.forEach(candidate => { candidate.ready = false; });
         room.message = `${cleaned} joined the table`;
         addEvent(room, 'player_join', room.message, { actorId: player.id });
@@ -834,7 +1031,7 @@ const server = http.createServer(async (req, res) => {
 
       if (req.method === 'GET' && parts.length === 3) {
         const playerId = url.searchParams.get('playerId');
-        const sessionToken = url.searchParams.get('sessionToken');
+        const sessionToken = bearerToken(req) || url.searchParams.get('sessionToken');
         requireMember(room, playerId, sessionToken);
         return sendJson(res, 200, { room: publicState(room, playerId) });
       }
@@ -886,10 +1083,34 @@ const turnClock = setInterval(() => {
 }, 250);
 turnClock.unref();
 
-if (require.main === module) {
-  server.listen(PORT, HOST, () => {
-    console.log(`Dice Night is live at http://${HOST}:${PORT}`);
+async function startServer() {
+  await initializeStorage();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(PORT, HOST, () => {
+      server.off('error', reject);
+      console.log(`Dice Night is live at http://${HOST}:${PORT}`);
+      resolve();
+    });
   });
 }
 
-module.exports = { server, rooms, retiredRooms, createRoom, action, adminAction, publicState, riskFor, applySafeRoll, addChatMessage, addReaction, addSpectator, expireTurnIfNeeded, MODES };
+if (require.main === module) {
+  startServer().catch(error => {
+    console.error('Dice Night could not start:', error.message);
+    process.exitCode = 1;
+  });
+
+  const shutdown = signal => {
+    console.log(`${signal} received, saving game state...`);
+    persistRooms();
+    server.close(async () => {
+      await database.close();
+      process.exit(0);
+    });
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
+}
+
+module.exports = { server, startServer, database, profiles, rooms, retiredRooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor, riskDieOutcome, applySafeRoll, addChatMessage, addReaction, addSpectator, expireTurnIfNeeded, MODES };

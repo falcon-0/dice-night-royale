@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
 let token = sessionStorage.getItem('dice-night-admin') || '';
 let timer;
+let recordsTimer;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
@@ -17,6 +18,51 @@ function toast(message) {
   $('#toast').textContent = message;
   $('#toast').classList.add('show');
   setTimeout(() => $('#toast').classList.remove('show'), 1700);
+}
+
+function formatDate(value) {
+  return value ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Unknown time';
+}
+
+async function refreshRecords() {
+  try {
+    const records = await api('/api/admin/records?limit=12');
+    $('#match-total').textContent = records.summary.matches || 0;
+    $('#record-player-total').textContent = records.summary.players || 0;
+    $('#roll-total').textContent = records.summary.rolls || 0;
+    $('#bust-total').textContent = records.summary.busts || 0;
+    $('#export-records').disabled = !records.configured;
+    $('#records-status').textContent = records.configured
+      ? 'PostgreSQL is connected. These records survive server restarts.'
+      : 'Local JSON mode is active. Add DATABASE_URL when deploying to enable permanent records.';
+    $('#recent-records').innerHTML = records.recent.length
+      ? records.recent.map(match => `<div class="record-row"><span><strong>${escapeHtml(match.winner_name || 'No winner')}</strong> · ${escapeHtml(match.mode)} · ${escapeHtml(match.room_code)}</span><small>${match.winner_score ?? 0} pts · ${escapeHtml(formatDate(match.ended_at))}</small></div>`).join('')
+      : '<p>No completed matches recorded yet.</p>';
+    $('#record-leaderboard').innerHTML = records.leaderboard.length
+      ? records.leaderboard.map((player, index) => `<div class="record-row"><span><strong>#${index + 1} ${escapeHtml(player.player_name)}</strong></span><small>${player.wins} wins · ${player.games_played} games</small></div>`).join('')
+      : '<p>Leaderboard appears after the first recorded match.</p>';
+  } catch {
+    $('#records-status').textContent = 'Records will activate after the PostgreSQL server update is deployed.';
+    $('#export-records').disabled = true;
+  }
+}
+
+async function downloadRecords() {
+  const response = await fetch('/api/admin/records.csv?limit=20000', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Could not export records.');
+  }
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'dice-night-match-records.csv';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
 }
 
 function roomCard(room) {
@@ -106,22 +152,35 @@ $('#login-form').addEventListener('submit', async event => {
     sessionStorage.setItem('dice-night-admin', token);
     $('#login-dialog').close();
     clearInterval(timer);
+    clearInterval(recordsTimer);
     timer = setInterval(refresh, 2500);
+    await refreshRecords();
+    recordsTimer = setInterval(refreshRecords, 15000);
   } else {
     $('#login-error').textContent = 'That key did not work.';
   }
 });
 
-$('#refresh-button').addEventListener('click', refresh);
+$('#refresh-button').addEventListener('click', async () => {
+  await Promise.all([refresh(), refreshRecords()]);
+});
+$('#export-records').addEventListener('click', async () => {
+  try { await downloadRecords(); } catch (error) { toast(error.message); }
+});
 $('#lock-button').addEventListener('click', () => {
   sessionStorage.removeItem('dice-night-admin');
   token = '';
   clearInterval(timer);
+  clearInterval(recordsTimer);
   $('#token-input').value = '';
   $('#login-dialog').showModal();
 });
 
 (async function start() {
-  if (token && await refresh()) timer = setInterval(refresh, 2500);
+  if (token && await refresh()) {
+    timer = setInterval(refresh, 2500);
+    await refreshRecords();
+    recordsTimer = setInterval(refreshRecords, 15000);
+  }
   else $('#login-dialog').showModal();
 })();

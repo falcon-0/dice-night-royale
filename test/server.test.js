@@ -5,10 +5,12 @@ const os = require('node:os');
 const path = require('node:path');
 const testDataFile = path.join(os.tmpdir(), `dice-night-test-${process.pid}.json`);
 const testRetiredFile = path.join(os.tmpdir(), `dice-night-retired-test-${process.pid}.json`);
+const testProfileFile = path.join(os.tmpdir(), `dice-night-profiles-test-${process.pid}.json`);
 process.env.DATA_FILE = testDataFile;
 process.env.RETIRED_FILE = testRetiredFile;
+process.env.PROFILE_FILE = testProfileFile;
 process.env.ADMIN_TOKEN = 'test-admin-key';
-const { server, rooms, createRoom, action, adminAction, publicState, riskFor, applySafeRoll, addChatMessage, addReaction, addSpectator, expireTurnIfNeeded } = require('../server');
+const { server, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor, riskDieOutcome, applySafeRoll, addChatMessage, addReaction, addSpectator, expireTurnIfNeeded } = require('../server');
 let baseUrl;
 
 test.before(async () => {
@@ -19,6 +21,7 @@ test.before(async () => {
 test.after(() => {
   fs.rmSync(testDataFile, { force: true });
   fs.rmSync(testRetiredFile, { force: true });
+  fs.rmSync(testProfileFile, { force: true });
 });
 
 test.after(async () => {
@@ -100,6 +103,34 @@ test('risk climbs while the roll-1 penalty stays at 5', () => {
   room.rollStreak = 20;
   assert.equal(riskFor(room).percent, 75);
   rooms.delete(room.code);
+});
+
+test('Risk Die begins half skulls, grows deadlier, and has five reward faces', () => {
+  const { room } = createRoom('Ada');
+  assert.deepEqual(riskDieFor(room), { percent: 50, skullFaces: 5, rewardFaces: 5, penalty: 5 });
+  assert.equal(riskDieOutcome(room, () => 0).busted, true);
+  const values = [9, 4];
+  assert.deepEqual(riskDieOutcome(room, () => values.shift()).reward, 30);
+  room.rollStreak = 4;
+  assert.deepEqual(riskDieFor(room), { percent: 58, skullFaces: 7, rewardFaces: 5, penalty: 5 });
+  rooms.delete(room.code);
+});
+
+test('optional profiles can be created, signed into, and authenticated', async () => {
+  const created = await request('/api/profiles', { displayName: 'Nova', pin: '246810' });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.profile.profileCode.length, 8);
+  assert.equal(created.data.profile.achievements[0].key, 'profile_created');
+
+  const rejected = await request('/api/profiles/login', { code: created.data.profile.profileCode, pin: '111111' });
+  assert.equal(rejected.status, 401);
+  const login = await request('/api/profiles/login', { code: created.data.profile.profileCode, pin: '246810' });
+  assert.equal(login.status, 200);
+
+  const response = await fetch(`${baseUrl}/api/profiles/me`, { headers: { Authorization: `Bearer ${login.data.profileToken}` } });
+  assert.equal(response.status, 200);
+  const authenticated = await response.json();
+  assert.equal(authenticated.profile.displayName, 'Nova');
 });
 
 test('an expired 10-second clock loses the pot and passes the turn', () => {

@@ -1,6 +1,7 @@
 node_modules/
 .env
 .env.*
+!.env.example
 
 # Runtime state and private admin credentials
 data/

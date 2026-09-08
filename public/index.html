@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=32">
+  <link rel="stylesheet" href="/styles.css?v=33">
 </head>
 <body>
   <section id="royale-intro" class="royale-intro" aria-label="Dice Night Royale introduction">
@@ -17,8 +17,8 @@
     <div class="intro-content">
       <p>THE TABLE HAS EVOLVED</p>
       <div class="intro-logo">DICE NIGHT <span>ROYALE</span></div>
-      <h1>Welcome to<br><em>version three.</em></h1>
-      <div class="intro-features"><span>3 game modes</span><span>Live spectators</span><span>Room records</span></div>
+      <h1>Welcome to<br><em>version 3.1.</em></h1>
+      <div class="intro-features"><span>Player profiles</span><span>Deadly Risk Die</span><span>Permanent records</span></div>
       <div class="intro-actions"><button id="enter-royale" class="primary-button">Enter Royale <b>→</b></button><button id="intro-updates" class="text-button">See what’s new</button></div>
     </div>
     <small class="intro-admin">♛ BUILT FOR FALCON · ADMIN</small>
@@ -30,6 +30,8 @@
       <span>DICE NIGHT <b class="royale-mark">ROYALE</b></span>
     </a>
     <div class="top-actions">
+      <button id="profile-button" class="text-button">Player profile</button>
+      <button id="admin-deck-button" class="text-button falcon-control">Falcon controls</button>
       <button id="updates-button" class="text-button update-link"><span></span> What’s new</button>
       <button id="how-button" class="text-button">How to play · super easy</button>
     </div>
@@ -38,9 +40,9 @@
   <main>
     <section id="home-screen" class="screen home-screen">
       <div class="hero-copy">
-        <p class="eyebrow">THE MAJOR UPDATE · VERSION 3</p>
+        <p class="eyebrow">THE MAJOR UPDATE · VERSION 3.1</p>
         <h1>Own the table.<br><em>Risk everything.</em></h1>
-        <p class="intro">Three game modes, live spectators, reactions, awards, room records, and the loudest dice night yet.</p>
+        <p class="intro">Profiles, achievements, two dice choices, permanent records, embedded Falcon controls, and a louder table.</p>
       </div>
 
       <div class="entry-card">
@@ -48,6 +50,7 @@
           <button class="mode-tab active" data-mode="create" role="tab">Create room</button>
           <button class="mode-tab" data-mode="join" role="tab">Join / rejoin</button>
         </div>
+        <div id="profile-strip" class="profile-strip">Playing as a guest. <button id="profile-strip-button" type="button">Save your stats</button></div>
         <form id="entry-form">
           <label for="name-input">Your name</label>
           <input id="name-input" maxlength="18" autocomplete="nickname" placeholder="Lucky player" required>
@@ -126,7 +129,7 @@
             <div class="game-actions">
               <button id="roll-button" class="primary-button action-button">Roll dice</button>
               <button id="hold-button" class="secondary-button action-button">Bank points</button>
-              <button id="double-button" class="double-button action-button">×2 Double Roll <small id="double-risk">+15% risk</small></button>
+              <button id="double-button" class="double-button action-button">Risk Die <small id="double-risk">5 reward faces + skull</small></button>
               <button id="freeze-button" class="freeze-button action-button">❄ Freeze a player <small>costs 5 pts</small></button>
             </div>
             <div class="reaction-bar" aria-label="Live reactions">
@@ -191,7 +194,7 @@
       <ul>
         <li><strong>Safety Net:</strong> Your first bad roll does not take 5 points.</li>
         <li><strong>Hot Streak:</strong> Three good rolls in one turn give you 10 extra points.</li>
-        <li><strong>Double Roll:</strong> When your pot has 10, risk more to win twice the roll.</li>
+        <li><strong>Risk Die:</strong> Five faces pay 10, 10, 20, 20, or 30. Five skulls bust you, and more skulls appear as your streak grows.</li>
         <li><strong>Freeze:</strong> Spend 5 saved points to make a friend miss one turn. Use it once each turn.</li>
       </ul>
     </details>
@@ -199,17 +202,61 @@
 
   <dialog id="updates-dialog" class="updates-dialog">
     <button id="close-updates" class="dialog-close" aria-label="Close">×</button>
-    <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 3.0</p>
-    <h2>A whole new table.</h2>
+    <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 3.1.0</p>
+    <h2>Your name means something now.</h2>
     <div class="update-list">
-      <article><span>01</span><div><strong>Three game modes</strong><p>Play balanced Classic, fast Blitz, or the 200-point Marathon.</p></div></article>
-      <article><span>02</span><div><strong>Ready lobby</strong><p>Everyone confirms they are ready before FALCON launches the match.</p></div></article>
-      <article><span>03</span><div><strong>Spectator gallery</strong><p>Up to 20 friends can watch, chat, and react without taking a seat.</p></div></article>
-      <article><span>04</span><div><strong>Live reactions</strong><p>Fire, laughter, shock, applause, celebration, and ice fly across the table.</p></div></article>
-      <article><span>05</span><div><strong>Match timeline</strong><p>Every roll, bank, bust, timeout, Freeze, and win becomes part of the story.</p></div></article>
-      <article><span>06</span><div><strong>Final awards</strong><p>Vault Master, Dice Addict, and Brave Soul are crowned after each match.</p></div></article>
-      <article><span>07</span><div><strong>Room records</strong><p>Games, victories, and lifetime banked points carry across rematches.</p></div></article>
-      <article><span>08</span><div><strong>Real rejoin</strong><p>Use the same room code and saved name to reclaim your place.</p></div></article>
+      <article><span>01</span><div><strong>Permanent profiles</strong><p>Create an optional profile with a code and PIN, then carry your identity across rooms.</p></div></article>
+      <article><span>02</span><div><strong>XP and levels</strong><p>Matches, rolls, points, and victories grow your permanent player level.</p></div></article>
+      <article><span>03</span><div><strong>Nine achievements</strong><p>Unlock badges for winning, banking, rolling, freezing, and surviving busts.</p></div></article>
+      <article><span>04</span><div><strong>Deadly Risk Die</strong><p>Five reward faces fight five skulls. Longer streaks add even more skulls.</p></div></article>
+      <article><span>05</span><div><strong>PostgreSQL records</strong><p>Hosted rooms and completed matches survive restarts safely.</p></div></article>
+      <article><span>06</span><div><strong>Access reporting</strong><p>Falcon can export records or connect Microsoft Access through safe read-only views.</p></div></article>
+      <article><span>07</span><div><strong>Controls on the main page</strong><p>Falcon manages live rooms without leaving the game website.</p></div></article>
+      <article><span>08</span><div><strong>Guests still welcome</strong><p>No profile is required. Friends can still enter quickly and use private rejoin keys.</p></div></article>
+    </div>
+  </dialog>
+
+  <dialog id="profile-dialog" class="profile-dialog">
+    <button id="close-profile" class="dialog-close" aria-label="Close">×</button>
+    <p class="eyebrow">PLAYER PROFILE · V3.1</p>
+    <h2>Keep your glory.</h2>
+    <p class="subtle">Profiles are optional. Guests can always play.</p>
+    <div id="profile-signed-out">
+      <div class="profile-forms">
+        <form id="create-profile-form">
+          <h3>Create profile</h3>
+          <input id="profile-name" maxlength="18" placeholder="Player name" required>
+          <input id="profile-pin" maxlength="6" inputmode="numeric" type="password" placeholder="Choose 6-digit PIN" required>
+          <button class="primary-button">Create and sign in</button>
+        </form>
+        <form id="login-profile-form">
+          <h3>Sign in again</h3>
+          <input id="profile-code" maxlength="8" placeholder="8-character profile code" required>
+          <input id="login-pin" maxlength="6" inputmode="numeric" type="password" placeholder="Your 6-digit PIN" required>
+          <button class="secondary-button">Sign in</button>
+        </form>
+      </div>
+      <p id="profile-error" class="error"></p>
+    </div>
+    <div id="profile-signed-in" class="hidden">
+      <div id="profile-card"></div>
+      <button id="profile-logout" class="secondary-button">Sign out on this device</button>
+    </div>
+  </dialog>
+
+  <dialog id="admin-deck-dialog" class="admin-deck-dialog">
+    <button id="close-admin-deck" class="dialog-close" aria-label="Close">×</button>
+    <p class="eyebrow">FALCON · PRIVATE CONTROL DECK</p>
+    <h2>Control the table.</h2>
+    <form id="inline-admin-login" class="inline-admin-login">
+      <input id="inline-admin-token" type="password" placeholder="Private admin key" required>
+      <button class="primary-button">Unlock</button>
+    </form>
+    <p id="inline-admin-error" class="error"></p>
+    <div id="inline-admin-content" class="hidden">
+      <div class="inline-admin-stats"><span><b id="inline-room-total">0</b> rooms</span><span><b id="inline-player-total">0</b> players</span><span><b id="inline-match-total">0</b> saved matches</span></div>
+      <div class="inline-admin-actions"><button id="inline-admin-refresh">Refresh</button><button id="inline-admin-export">Export for Access</button><button id="inline-admin-lock">Lock</button></div>
+      <div id="inline-admin-rooms" class="inline-admin-rooms"></div>
     </div>
   </dialog>
 
@@ -222,6 +269,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=32"></script>
+  <script src="/app.js?v=33"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin.css?v=31">
+  <link rel="stylesheet" href="/admin.css?v=32">
 </head>
 <body>
   <header>
@@ -20,6 +20,22 @@
     <section class="hero">
       <div><p class="eyebrow">PRIVATE ADMIN CONSOLE</p><h1>The whole table,<br><em>under control.</em></h1></div>
       <div class="totals"><article><small>ROOMS</small><strong id="room-total">0</strong></article><article><small>PLAYERS</small><strong id="player-total">0</strong></article><article><small>PLAYING</small><strong id="playing-total">0</strong></article></div>
+    </section>
+    <section class="records-panel">
+      <div class="section-head">
+        <div><p class="eyebrow">PERMANENT RECORD BOOK</p><h2>Match history</h2><p id="records-status">Connect PostgreSQL to begin permanent records.</p></div>
+        <button id="export-records" disabled>Export for Access</button>
+      </div>
+      <div class="record-totals">
+        <article><small>MATCHES</small><strong id="match-total">0</strong></article>
+        <article><small>RECORDED PLAYERS</small><strong id="record-player-total">0</strong></article>
+        <article><small>ROLLS</small><strong id="roll-total">0</strong></article>
+        <article><small>BUSTS</small><strong id="bust-total">0</strong></article>
+      </div>
+      <div class="record-grids">
+        <div><h3>Recent winners</h3><div id="recent-records" class="record-list"><p>No completed matches recorded yet.</p></div></div>
+        <div><h3>Leaderboard</h3><div id="record-leaderboard" class="record-list"><p>Leaderboard appears after the first recorded match.</p></div></div>
+      </div>
     </section>
     <div class="section-head"><div><h2>Live rooms</h2><p>Changes take effect immediately.</p></div><button id="refresh-button">↻ Refresh</button></div>
     <section id="rooms" class="rooms"><div class="empty">No active rooms yet.</div></section>
@@ -40,6 +56,6 @@
   </dialog>
 
   <div id="toast" class="toast"></div>
-  <script src="/admin.js?v=31"></script>
+  <script src="/admin.js?v=32"></script>
 </body>
 </html>

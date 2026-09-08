@@ -13,6 +13,8 @@ header { width:min(1240px,calc(100% - 36px)); height:78px; margin:auto; display:
 #connection { color:var(--muted); font-size:.72rem; }
 #connection i { display:inline-block; width:6px; height:6px; margin-right:6px; border-radius:50%; background:var(--lime); box-shadow:0 0 8px var(--lime); }
 #lock-button,#refresh-button { padding:8px 11px; border:1px solid var(--line); border-radius:7px; color:var(--muted); background:transparent; }
+#export-records { padding:9px 12px; border:1px solid rgba(199,240,106,.25); border-radius:7px; color:#16200e; background:var(--lime); font-weight:700; }
+#export-records:disabled { color:var(--muted); border-color:var(--line); background:rgba(255,255,255,.04); cursor:not-allowed; }
 main { width:min(1240px,calc(100% - 36px)); margin:50px auto 90px; }
 .hero { display:flex; justify-content:space-between; align-items:end; gap:30px; padding-bottom:45px; }
 .eyebrow { margin:0 0 12px; color:var(--gold); font-size:.62rem; letter-spacing:.17em; font-weight:700; }
@@ -26,6 +28,20 @@ h1 em { color:var(--gold); }
 .section-head { display:flex; justify-content:space-between; align-items:end; margin-bottom:16px; }
 .section-head h2 { font-size:1.8rem; }
 .section-head p { margin:3px 0 0; color:var(--muted); font-size:.75rem; }
+.records-panel { margin-bottom:40px; padding:20px; border:1px solid rgba(199,240,106,.16); border-radius:15px; background:rgba(20,32,28,.78); }
+.records-panel .section-head { align-items:center; }
+.record-totals { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.record-totals article { padding:14px; border:1px solid var(--line); border-radius:9px; background:rgba(255,255,255,.025); }
+.record-totals small { display:block; color:var(--muted); font-size:.53rem; letter-spacing:.13em; }
+.record-totals strong { display:block; margin-top:5px; font:700 1.5rem "Fraunces",serif; }
+.record-grids { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:13px; }
+.record-grids > div { min-width:0; padding:13px; border:1px solid rgba(255,255,255,.07); border-radius:10px; }
+.record-grids h3 { margin:0 0 9px; color:var(--gold); font-size:.61rem; letter-spacing:.12em; text-transform:uppercase; }
+.record-list { display:grid; gap:6px; }
+.record-list p { margin:0; color:var(--muted); font-size:.68rem; }
+.record-row { min-width:0; display:flex; justify-content:space-between; gap:10px; font-size:.7rem; }
+.record-row span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.record-row small { flex:none; color:var(--muted); }
 .rooms { display:grid; gap:14px; }
 .room-card { border:1px solid var(--line); border-radius:15px; background:rgba(20,32,28,.88); overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,.14); }
 .room-head { padding:17px 19px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); }
@@ -65,6 +81,6 @@ dialog label { display:block; margin:22px 0 7px; color:var(--muted); font-size:.
 dialog button { width:100%; margin-top:10px; padding:12px; border:0; border-radius:8px; color:#1d180b; background:var(--gold); font-weight:700; }
 .toast { position:fixed; left:50%; bottom:22px; padding:10px 15px; border-radius:7px; color:#152016; background:var(--lime); font-size:.75rem; font-weight:700; opacity:0; transform:translate(-50%,12px); transition:.2s; pointer-events:none; }
 .toast.show { opacity:1; transform:translate(-50%,0); }
-@media(max-width:760px){.hero{align-items:start;flex-direction:column}.totals{width:100%}.totals article{min-width:0;flex:1}.room-head{align-items:start;flex-direction:column;gap:12px}.room-body{grid-template-columns:1fr}.broadcast{border-left:0;border-top:1px solid var(--line)}}
+@media(max-width:760px){.hero{align-items:start;flex-direction:column}.totals{width:100%}.totals article{min-width:0;flex:1}.record-totals{grid-template-columns:repeat(2,1fr)}.record-grids{grid-template-columns:1fr}.room-head{align-items:start;flex-direction:column;gap:12px}.room-body{grid-template-columns:1fr}.broadcast{border-left:0;border-top:1px solid var(--line)}}
 @media(max-width:480px){.header-actions #connection{display:none}.players{grid-template-columns:1fr}.score-tools button{width:29px;height:29px}.totals small{font-size:.48rem}}
 .spectator-admin { margin: 6px 5px 0 0; padding: 6px 9px; border: 1px solid rgba(255,255,255,.12); border-radius: 99px; color: #a6aaa2; background: rgba(255,255,255,.04); font-size: .66rem; }
