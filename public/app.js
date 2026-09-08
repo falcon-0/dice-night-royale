@@ -957,7 +957,6 @@ $('#leaderboard-filters').addEventListener('click', event => {
 for (const id of ['profile-pin', 'login-pin']) {
   $(`#${id}`).addEventListener('input', event => { event.target.value = event.target.value.replace(/\D/g, '').slice(0, 6); });
 }
-$('#profile-code').addEventListener('input', event => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 8); });
 $('#create-profile-form').addEventListener('submit', async event => {
   event.preventDefault();
   $('#profile-error').textContent = '';

@@ -4,7 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const { LocalRecordStore } = require('./records');
-const { ProfileService, normalizeCode } = require('./profiles');
+const { ProfileService, normalizeLoginIdentifier } = require('./profiles');
 const { BOT_STYLES, availableBotName, botStyle, chooseBotAction } = require('./bots');
 const { readJsonFile, writeJsonFile } = require('./json-store');
 
@@ -1316,7 +1316,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST' && parts[2] === 'login' && parts.length === 3) {
         const { code, pin } = await readJson(req);
-        const scope = `profile-login:${normalizeCode(code)}`;
+        const scope = `profile-login:${normalizeLoginIdentifier(code)}`;
         checkAuthThrottle(req, scope);
         try {
           const login = await profiles.login(code, pin);

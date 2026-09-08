@@ -266,8 +266,9 @@
         </form>
         <form id="login-profile-form">
           <h3>Sign in again</h3>
-          <input id="profile-code" maxlength="8" placeholder="8-character profile code" required>
-          <input id="login-pin" maxlength="6" inputmode="numeric" type="password" placeholder="Your 6-digit PIN" required>
+          <label for="profile-code">Player name or profile code</label>
+          <input id="profile-code" maxlength="10" autocomplete="username" placeholder="Name or 8-character code" required>
+          <input id="login-pin" maxlength="6" inputmode="numeric" type="password" autocomplete="current-password" placeholder="Your 6-digit PIN" required>
           <button class="secondary-button">Sign in</button>
         </form>
       </div>
@@ -340,6 +341,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=315"></script>
+  <script src="/app.js?v=316"></script>
 </body>
 </html>

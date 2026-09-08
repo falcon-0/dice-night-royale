@@ -39,6 +39,12 @@ function normalizeCode(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 8);
 }
 
+function normalizeLoginIdentifier(value) {
+  const name = cleanDisplayName(value).toLocaleLowerCase();
+  const code = normalizeCode(value);
+  return code.length === 8 ? `code:${code}` : `name:${name}`;
+}
+
 function tokenHash(token) {
   return crypto.createHash('sha256').update(String(token || '')).digest('hex');
 }
@@ -188,18 +194,24 @@ class ProfileService {
     return this.issueSession(id);
   }
 
-  async login(codeValue, pin) {
-    const code = normalizeCode(codeValue);
-    const profile = await this.findByCode(code);
-    if (!profile || !/^\d{6}$/.test(String(pin || ''))) {
-      throw Object.assign(new Error('Profile code or PIN is incorrect.'), { status: 401 });
+  async login(identifierValue, pin) {
+    const code = normalizeCode(identifierValue);
+    const name = cleanDisplayName(identifierValue).toLocaleLowerCase();
+    const candidates = this.local.profiles.filter(profile => (
+      profile.profileCode === code || profile.displayName.toLocaleLowerCase() === name
+    ));
+    if (!candidates.length || !/^\d{6}$/.test(String(pin || ''))) {
+      throw Object.assign(new Error('Profile name/code or PIN is incorrect.'), { status: 401 });
     }
-    const supplied = Buffer.from(await pinHash(String(pin), profile.pinSalt), 'hex');
-    const expected = Buffer.from(profile.pinHash, 'hex');
-    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
-      throw Object.assign(new Error('Profile code or PIN is incorrect.'), { status: 401 });
+
+    for (const profile of candidates) {
+      const supplied = Buffer.from(await pinHash(String(pin), profile.pinSalt), 'hex');
+      const expected = Buffer.from(profile.pinHash, 'hex');
+      if (supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected)) {
+        return this.issueSession(profile.id);
+      }
     }
-    return this.issueSession(profile.id);
+    throw Object.assign(new Error('Profile name/code or PIN is incorrect.'), { status: 401 });
   }
 
   async issueSession(profileId) {
@@ -431,5 +443,5 @@ class ProfileService {
 
 module.exports = {
   ProfileService, ACHIEVEMENTS, PROFILE_TITLES, MAX_DISPLAY_NAME_LENGTH,
-  cleanDisplayName, normalizeCode, levelFor
+  cleanDisplayName, normalizeCode, normalizeLoginIdentifier, levelFor
 };

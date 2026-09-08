@@ -258,6 +258,19 @@ test('optional profiles can be created, signed into, and authenticated', async (
   assert.equal(authenticated.profile.displayName, 'Nova');
 });
 
+test('saved profiles can sign in with their player name and PIN', async () => {
+  const first = await request('/api/profiles', { displayName: 'Back Again', pin: '135790' });
+  const second = await request('/api/profiles', { displayName: 'Back Again', pin: '975310' });
+
+  const firstLogin = await request('/api/profiles/login', { code: 'back again', pin: '135790' });
+  assert.equal(firstLogin.status, 200);
+  assert.equal(firstLogin.data.profile.id, first.data.profile.id);
+
+  const secondLogin = await request('/api/profiles/login', { code: 'BACK AGAIN', pin: '975310' });
+  assert.equal(secondLogin.status, 200);
+  assert.equal(secondLogin.data.profile.id, second.data.profile.id);
+});
+
 test('equivalent profile-code formatting shares one failed-login limit', async () => {
   const created = await request('/api/profiles', { displayName: 'Throttle Test', pin: '246810' });
   const code = created.data.profile.profileCode;
