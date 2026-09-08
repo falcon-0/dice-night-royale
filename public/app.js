@@ -828,14 +828,6 @@ async function inlineAdminAction(code, type, extra = {}) {
   await refreshInlineAdmin();
 }
 
-$('#admin-deck-button').addEventListener('click', async () => {
-  $('#admin-deck-dialog').showModal();
-  if (inlineAdminToken) {
-    try { await refreshInlineAdmin(); } catch { hideInlineAdminContent({ clearToken: true }); }
-  } else {
-    hideInlineAdminContent();
-  }
-});
 $('#close-admin-deck').addEventListener('click', () => $('#admin-deck-dialog').close());
 $('#inline-admin-login').addEventListener('submit', async event => {
   event.preventDefault();

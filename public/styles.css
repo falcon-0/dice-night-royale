@@ -79,6 +79,8 @@ button { cursor: pointer; }
   background: transparent;
   color: var(--muted);
   font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
 }
 .top-actions { display: flex; align-items: center; gap: 22px; }
 .update-link { color: var(--ink); }

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=313">
+  <link rel="stylesheet" href="/styles.css?v=315">
 </head>
 <body>
   <section id="royale-intro" class="royale-intro" role="dialog" aria-modal="true" aria-labelledby="intro-title">
@@ -33,7 +33,7 @@
       <button id="sound-toggle" class="text-button sound-toggle" type="button" aria-pressed="false" aria-label="Mute game sounds">🔊 <span>Sound</span></button>
       <button id="leaderboard-button" class="text-button leaderboard-link" aria-haspopup="dialog">🏆 Leaderboard</button>
       <button id="profile-button" class="text-button">Player profile</button>
-      <button id="admin-deck-button" class="text-button falcon-control" aria-label="Open Admin Panel" aria-haspopup="dialog" aria-controls="admin-deck-dialog">Admin Panel</button>
+      <a class="text-button falcon-control" href="/admin.html" target="_blank" rel="noopener" aria-label="Open Admin Panel in a new tab">Admin Panel ↗</a>
       <button id="updates-button" class="text-button update-link"><span></span> What’s new</button>
       <button id="how-button" class="text-button">How to play · super easy</button>
     </div>
@@ -340,6 +340,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=314"></script>
+  <script src="/app.js?v=315"></script>
 </body>
 </html>
