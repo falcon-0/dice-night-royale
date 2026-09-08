@@ -160,6 +160,7 @@ class ProfileService {
       }
     }
     if (changed) this.persistLocal();
+    if (removedProfileIds.size) this.persistLocal();
     return { renamedProfiles, removedProfiles };
   }
 
@@ -377,6 +378,7 @@ class ProfileService {
       if (typeof item === 'string') return !item.startsWith(`${id}:`);
       return item?.profileId !== id;
     });
+    this.persistLocal();
     this.persistLocal();
     return { id: profile.id, displayName: profile.displayName };
   }

@@ -126,6 +126,7 @@ async function initializeStorage() {
   await recordsStore.initialize();
   const profileMigration = await profiles.initialize();
   let reconciled = false;
+  let privacyScrubbed = false;
   const removedProfiles = profileMigration?.removedProfiles || [];
   if (removedProfiles.length) {
     await recordsStore.removeProfiles(removedProfiles.map(profile => profile.profileId));
@@ -158,6 +159,7 @@ async function initializeStorage() {
       }
       for (const event of room.events || []) event.text = replaceName(event.text);
     }
+    if (scrubRetiredIdentityText(room)) privacyScrubbed = true;
     const afterIdentity = JSON.stringify({
       message: room.message,
       players: room.players,
@@ -178,7 +180,8 @@ async function initializeStorage() {
       await archiveCompletedMatch(room).catch(error => console.error('Could not reconcile completed match:', error.message));
     }
   }
-  if (reconciled) persistRooms();
+  if (reconciled || privacyScrubbed) persistRooms();
+  if (removedProfiles.length || privacyScrubbed) persistRooms();
 }
 
 function roomCode() {
@@ -246,22 +249,44 @@ function profileReferenceInEvent(event, playerIds) {
     || (Array.isArray(details.tiedPlayerIds) && details.tiedPlayerIds.some(id => playerIds.has(id)));
 }
 
+function scrubRetiredIdentityText(room) {
+  const retiredName = /ALOYINLEPONSMALLIE/gi;
+  let changed = false;
+  const scrub = value => {
+    if (typeof value !== 'string') return value;
+    retiredName.lastIndex = 0;
+    if (!retiredName.test(value)) return value;
+    retiredName.lastIndex = 0;
+    changed = true;
+    return value.replace(retiredName, 'Former player');
+  };
+  room.message = scrub(room.message);
+  for (const message of room.chat || []) {
+    message.name = scrub(message.name);
+    message.text = scrub(message.text);
+  }
+  for (const event of room.events || []) event.text = scrub(event.text);
+  return changed;
+}
+
 function removeProfileReferencesFromRooms(removedProfiles) {
   const profileIds = new Set(removedProfiles.map(profile => profile.profileId));
+  const displayNames = new Set(removedProfiles.map(profile => String(profile.displayName || '').toUpperCase()));
+  const isRemovedPerson = person => profileIds.has(person.profileId) || displayNames.has(String(person.name || '').toUpperCase());
   let roomsUpdated = 0;
   let roomsRetired = 0;
   for (const [code, room] of rooms) {
     const people = [...room.players, ...(room.spectators || []), ...(room.departedPlayers || [])];
-    const removedPeople = people.filter(person => profileIds.has(person.profileId));
+    const removedPeople = people.filter(isRemovedPerson);
     if (!removedPeople.length) continue;
     const playerIds = new Set(removedPeople.map(person => person.id));
     const currentPlayerId = room.players[room.turnIndex]?.id;
     const removedCurrentPlayer = playerIds.has(currentPlayerId);
     const removedWinner = playerIds.has(room.winnerId);
 
-    room.players = room.players.filter(person => !profileIds.has(person.profileId));
-    room.spectators = (room.spectators || []).filter(person => !profileIds.has(person.profileId));
-    room.departedPlayers = (room.departedPlayers || []).filter(person => !profileIds.has(person.profileId));
+    room.players = room.players.filter(person => !isRemovedPerson(person));
+    room.spectators = (room.spectators || []).filter(person => !isRemovedPerson(person));
+    room.departedPlayers = (room.departedPlayers || []).filter(person => !isRemovedPerson(person));
     room.chat = (room.chat || []).filter(message => !playerIds.has(message.playerId));
     room.reactions = (room.reactions || []).filter(reaction => !playerIds.has(reaction.playerId));
     room.events = (room.events || []).filter(event => !profileReferenceInEvent(event, playerIds));
@@ -1337,7 +1362,10 @@ const server = http.createServer(async (req, res) => {
         const deleted = await profiles.adminDelete(profileId);
         const recordsRemoved = await recordsStore.removeProfiles([profileId]);
         const removal = removeProfileReferencesFromRooms([{ profileId, displayName: deleted.displayName }]);
-        if (removal.roomsUpdated || removal.roomsRetired) persistRooms();
+        if (removal.roomsUpdated || removal.roomsRetired) {
+          persistRooms();
+          persistRooms();
+        }
         if (removal.roomsRetired) persistRetiredRooms();
         return sendJson(res, 200, { deleted: true, profile: deleted, recordsRemoved, ...removal });
       }

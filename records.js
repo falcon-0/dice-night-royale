@@ -145,7 +145,10 @@ class LocalRecordStore {
     if (!removed.size) return 0;
     const before = this.matches.length;
     this.matches = this.matches.filter(match => !(match.players || []).some(player => removed.has(player.profileId)));
-    if (this.matches.length !== before) this.persist();
+    if (this.matches.length !== before) {
+      this.persist();
+      this.persist();
+    }
     return before - this.matches.length;
   }
 
