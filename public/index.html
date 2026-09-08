@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#111c18">
+  <title>Dice Night Royale — Major Update</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=32">
+</head>
+<body>
+  <section id="royale-intro" class="royale-intro" aria-label="Dice Night Royale introduction">
+    <div class="intro-orbit one"></div><div class="intro-orbit two"></div>
+    <div class="intro-die" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="intro-content">
+      <p>THE TABLE HAS EVOLVED</p>
+      <div class="intro-logo">DICE NIGHT <span>ROYALE</span></div>
+      <h1>Welcome to<br><em>version three.</em></h1>
+      <div class="intro-features"><span>3 game modes</span><span>Live spectators</span><span>Room records</span></div>
+      <div class="intro-actions"><button id="enter-royale" class="primary-button">Enter Royale <b>→</b></button><button id="intro-updates" class="text-button">See what’s new</button></div>
+    </div>
+    <small class="intro-admin">♛ BUILT FOR FALCON · ADMIN</small>
+  </section>
+  <div class="grain"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Dice Night home">
+      <span class="brand-die" aria-hidden="true">●</span>
+      <span>DICE NIGHT <b class="royale-mark">ROYALE</b></span>
+    </a>
+    <div class="top-actions">
+      <button id="updates-button" class="text-button update-link"><span></span> What’s new</button>
+      <button id="how-button" class="text-button">How to play · super easy</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="home-screen" class="screen home-screen">
+      <div class="hero-copy">
+        <p class="eyebrow">THE MAJOR UPDATE · VERSION 3</p>
+        <h1>Own the table.<br><em>Risk everything.</em></h1>
+        <p class="intro">Three game modes, live spectators, reactions, awards, room records, and the loudest dice night yet.</p>
+      </div>
+
+      <div class="entry-card">
+        <div class="mode-tabs" role="tablist">
+          <button class="mode-tab active" data-mode="create" role="tab">Create room</button>
+          <button class="mode-tab" data-mode="join" role="tab">Join / rejoin</button>
+        </div>
+        <form id="entry-form">
+          <label for="name-input">Your name</label>
+          <input id="name-input" maxlength="18" autocomplete="nickname" placeholder="Lucky player" required>
+          <div id="room-field" class="hidden">
+            <label for="room-input">Room code</label>
+            <input id="room-input" maxlength="5" autocomplete="off" spellcheck="false" placeholder="ABCDE">
+            <div class="role-switch" aria-label="Choose how to join">
+              <button type="button" class="role-choice active" data-role="player">Play</button>
+              <button type="button" class="role-choice" data-role="spectator">Watch</button>
+            </div>
+            <label for="rejoin-input">Private rejoin key <small>only if returning</small></label>
+            <input id="rejoin-input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digits">
+          </div>
+          <button id="entry-submit" class="primary-button" type="submit">Create a room <span>→</span></button>
+          <p id="entry-error" class="error" role="alert"></p>
+        </form>
+        <div class="card-footer"><span></span> FREE TO PLAY <span></span></div>
+      </div>
+    </section>
+
+    <section id="game-screen" class="screen game-screen hidden">
+      <div class="room-strip">
+        <div>
+          <span class="muted-label">ROOM</span>
+          <strong id="room-code">—</strong>
+        </div>
+        <div class="room-actions">
+          <button id="session-key" class="copy-button" title="Keep this private">🔑 <span>Rejoin key</span></button>
+          <button id="timeline-button" class="copy-button"><span>↯</span> Timeline</button>
+          <button id="chat-button" class="copy-button"><span>◌</span> Chat <b id="chat-badge" class="hidden">0</b></button>
+          <button id="copy-button" class="copy-button"><span>⧉</span> Copy invite</button>
+        </div>
+      </div>
+
+      <div class="activity-banner" aria-live="polite">
+        <span class="activity-pulse"></span>
+        <div><small>LIVE TABLE</small><strong id="status-message">Waiting for players</strong></div>
+        <b id="last-action-die">READY</b>
+      </div>
+
+      <div id="players" class="players"></div>
+
+      <div class="table-wrap">
+        <div class="table-glow"></div>
+        <div class="game-table">
+          <div id="lobby-panel" class="center-panel">
+            <p class="eyebrow">YOUR TABLE IS OPEN</p>
+            <h2>Waiting for players</h2>
+            <p id="lobby-count" class="subtle">1 of 4 seats filled</p>
+            <div class="invite-code"><span id="invite-code">—</span></div>
+            <p class="microcopy">Share this code or copy the invite link</p>
+            <div id="mode-picker" class="mode-picker">
+              <button data-game-mode="classic"><b>Classic</b><small>100 pts · 10 sec</small></button>
+              <button data-game-mode="blitz"><b>Blitz</b><small>50 pts · 7 sec</small></button>
+              <button data-game-mode="marathon"><b>Marathon</b><small>200 pts · 15 sec</small></button>
+            </div>
+            <p id="ready-note" class="microcopy">Everyone gets ready, then FALCON starts.</p>
+            <button id="ready-button" class="secondary-button">I’m ready</button>
+            <button id="start-button" class="primary-button" disabled>Start game</button>
+          </div>
+
+          <div id="play-panel" class="center-panel hidden">
+            <div class="turn-heading"><p id="turn-label" class="eyebrow">YOUR TURN</p><strong id="turn-timer">10.0s</strong></div>
+            <div class="timer-track"><span id="timer-fill"></span></div>
+            <div id="dice" class="dice" aria-label="No roll yet"></div>
+            <div class="turn-score">
+              <span>TURN POT</span>
+              <strong id="turn-score">0</strong>
+            </div>
+            <div class="risk-block">
+              <div class="risk-copy"><span>BUST RISK</span><strong id="risk-percent">16%</strong></div>
+              <div class="risk-track"><span id="risk-fill"></span></div>
+              <small id="risk-penalty">Roll 1 penalty: −5 points</small>
+            </div>
+            <div class="streak-chip">🔥 <span id="streak-progress">3 rolls to +10 bonus</span></div>
+            <div class="game-actions">
+              <button id="roll-button" class="primary-button action-button">Roll dice</button>
+              <button id="hold-button" class="secondary-button action-button">Bank points</button>
+              <button id="double-button" class="double-button action-button">×2 Double Roll <small id="double-risk">+15% risk</small></button>
+              <button id="freeze-button" class="freeze-button action-button">❄ Freeze a player <small>costs 5 pts</small></button>
+            </div>
+            <div class="reaction-bar" aria-label="Live reactions">
+              <button data-reaction="🔥">🔥</button><button data-reaction="😂">😂</button><button data-reaction="😱">😱</button><button data-reaction="🎉">🎉</button><button data-reaction="👏">👏</button><button data-reaction="❄️">❄️</button>
+            </div>
+            <div id="reaction-stage" class="reaction-stage" aria-live="polite"></div>
+          </div>
+
+          <div id="winner-panel" class="center-panel hidden">
+            <p class="eyebrow">WE HAVE A WINNER</p>
+            <div class="trophy">✦</div>
+            <h2 id="winner-name">Winner!</h2>
+            <p id="winner-score" class="subtle"></p>
+            <p id="winner-stats" class="winner-stats"></p>
+            <div id="awards" class="awards"></div>
+            <div id="room-records" class="room-records"></div>
+            <button id="restart-button" class="primary-button">Play again</button>
+          </div>
+        </div>
+      </div>
+
+      <p id="game-error" class="error centered" role="alert"></p>
+      <div id="spectator-row" class="spectator-row hidden"></div>
+    </section>
+  </main>
+
+  <aside id="chat-panel" class="chat-panel" aria-label="Room chat" aria-hidden="true">
+    <div class="chat-head">
+      <div><span class="live-dot"></span><strong>Room chat</strong><small id="chat-members">0 players</small></div>
+      <button id="close-chat" aria-label="Close chat">×</button>
+    </div>
+    <div id="chat-messages" class="chat-messages"><p class="empty-chat">No messages yet. Say hello 👋</p></div>
+    <form id="chat-form" class="chat-form">
+      <input id="chat-input" maxlength="160" autocomplete="off" placeholder="Message the room…" aria-label="Chat message">
+      <button type="submit" aria-label="Send message">↑</button>
+    </form>
+    <p id="chat-error" class="chat-error"></p>
+  </aside>
+
+  <aside id="timeline-panel" class="chat-panel timeline-panel" aria-label="Match timeline" aria-hidden="true">
+    <div class="chat-head">
+      <div><span class="live-dot"></span><strong>Match timeline</strong><small>Every big moment</small></div>
+      <button id="close-timeline" aria-label="Close timeline">×</button>
+    </div>
+    <div id="timeline-events" class="timeline-events"></div>
+  </aside>
+
+  <dialog id="rules-dialog">
+    <button id="close-rules" class="dialog-close" aria-label="Close">×</button>
+    <p class="eyebrow">SUPER EASY GUIDE</p>
+    <h2>Roll. Save. Reach the target.</h2>
+    <div class="baby-rules">
+      <article><span>👀</span><div><strong>1. Wait for your name</strong><p>When the game says “YOUR TURN,” it is your turn.</p></div></article>
+      <article><span>🎲</span><div><strong>2. Tap “Roll dice”</strong><p>The number you roll goes into your little green pot.</p></div></article>
+      <article><span>💰</span><div><strong>3. Tap “Bank points”</strong><p>This saves the pot into your big score. Saved points are yours.</p></div></article>
+      <article><span>☝️</span><div><strong>4. Be careful with 1</strong><p>Roll a 1 and the pot goes away. You also lose 5 saved points.</p></div></article>
+      <article><span>⏰</span><div><strong>5. Tap before time runs out</strong><p>Use the timer on screen. If it reaches zero, your turn ends.</p></div></article>
+      <article><span>🏆</span><div><strong>6. Reach the target</strong><p>Blitz needs 50, Classic needs 100, and Marathon needs 200. First there wins!</p></div></article>
+    </div>
+    <details class="extra-rules">
+      <summary>Show me the extra tricks</summary>
+      <ul>
+        <li><strong>Safety Net:</strong> Your first bad roll does not take 5 points.</li>
+        <li><strong>Hot Streak:</strong> Three good rolls in one turn give you 10 extra points.</li>
+        <li><strong>Double Roll:</strong> When your pot has 10, risk more to win twice the roll.</li>
+        <li><strong>Freeze:</strong> Spend 5 saved points to make a friend miss one turn. Use it once each turn.</li>
+      </ul>
+    </details>
+  </dialog>
+
+  <dialog id="updates-dialog" class="updates-dialog">
+    <button id="close-updates" class="dialog-close" aria-label="Close">×</button>
+    <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 3.0</p>
+    <h2>A whole new table.</h2>
+    <div class="update-list">
+      <article><span>01</span><div><strong>Three game modes</strong><p>Play balanced Classic, fast Blitz, or the 200-point Marathon.</p></div></article>
+      <article><span>02</span><div><strong>Ready lobby</strong><p>Everyone confirms they are ready before FALCON launches the match.</p></div></article>
+      <article><span>03</span><div><strong>Spectator gallery</strong><p>Up to 20 friends can watch, chat, and react without taking a seat.</p></div></article>
+      <article><span>04</span><div><strong>Live reactions</strong><p>Fire, laughter, shock, applause, celebration, and ice fly across the table.</p></div></article>
+      <article><span>05</span><div><strong>Match timeline</strong><p>Every roll, bank, bust, timeout, Freeze, and win becomes part of the story.</p></div></article>
+      <article><span>06</span><div><strong>Final awards</strong><p>Vault Master, Dice Addict, and Brave Soul are crowned after each match.</p></div></article>
+      <article><span>07</span><div><strong>Room records</strong><p>Games, victories, and lifetime banked points carry across rematches.</p></div></article>
+      <article><span>08</span><div><strong>Real rejoin</strong><p>Use the same room code and saved name to reclaim your place.</p></div></article>
+    </div>
+  </dialog>
+
+  <dialog id="freeze-dialog" class="freeze-dialog">
+    <button id="close-freeze" class="dialog-close" aria-label="Close">×</button>
+    <p class="eyebrow">SPEND 5 POINTS</p>
+    <h2>Freeze whose turn?</h2>
+    <p class="subtle">They’ll skip their next turn. Choose wisely.</p>
+    <div id="freeze-targets" class="freeze-targets"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/app.js?v=32"></script>
+</body>
+</html>

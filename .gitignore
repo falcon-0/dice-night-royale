@@ -1,0 +1,23 @@
+node_modules/
+.env
+.env.*
+
+# Runtime state and private admin credentials
+data/
+**/admin-token.txt
+
+# Local server output and visual test captures
+*.log
+*.png
+
+# One-off live operations (not application source)
+capture-live-state.js
+clear-rooms.js
+live-score-adjust.js
+reset-session.js
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
