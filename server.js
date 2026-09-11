@@ -10,7 +10,7 @@ const { readJsonFile, writeJsonFile } = require('./json-store');
 
 const PORT = Number(process.env.PORT) || 4173;
 const HOST = process.env.HOST || '0.0.0.0';
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.2.0';
 const MAX_PLAYERS = 9;
 const TURN_MS = 10_000;
 const MAX_SPECTATORS = 20;
@@ -91,6 +91,9 @@ function loadSavedRooms(saved) {
           player.matchBanked ??= 0;
           player.matchFreezes ??= 0;
           player.turnsTaken ??= 0;
+          player.spotlightUsed ??= false;
+          player.hypeUsed ??= false;
+          player.challengeUsed ??= false;
           player.isBot = Boolean(player.isBot);
           if (player.isBot) {
             player.botStyle = botStyle(player.botStyle).id;
@@ -237,6 +240,7 @@ function profileSummary(profile) {
   return {
     level: profile.level,
     featuredTitle: profile.featuredTitle || null,
+    subscription: profile.subscription || null,
     achievements: (profile.achievements || []).slice(-3).map(item => ({ key: item.key, name: item.name, icon: item.icon }))
   };
 }
@@ -437,6 +441,9 @@ function addPlayer(room, name, profile = null) {
     matchBanked: 0,
     matchFreezes: 0,
     turnsTaken: 0,
+    spotlightUsed: false,
+    hypeUsed: false,
+    challengeUsed: false,
     isBot: false,
     profileId: profile?.id || null,
     profile: profileSummary(profile),
@@ -583,9 +590,11 @@ function addChatMessage(room, playerId, value, now = Date.now()) {
 
 function addReaction(room, playerId, emoji, now = Date.now()) {
   const allowed = new Set(['🔥', '😂', '😱', '🎉', '👏', '❄️']);
+  const premium = new Set(['👑', '⚡', '🦅']);
   const person = [...room.players, ...(room.spectators || [])].find(candidate => candidate.id === playerId);
   if (!person) throw Object.assign(new Error('You are not in this room.'), { status: 403 });
-  if (!allowed.has(emoji)) throw Object.assign(new Error('That reaction is not available.'), { status: 400 });
+  const hasReactionPack = person.profile?.subscription?.benefits?.some(benefit => benefit.key === 'reaction_pack');
+  if (!allowed.has(emoji) && !(premium.has(emoji) && hasReactionPack)) throw Object.assign(new Error('That reaction is not available for your plan.'), { status: 400 });
   if (person.lastReactionAt && now - person.lastReactionAt < 700) {
     throw Object.assign(new Error('React a little slower.'), { status: 429 });
   }
@@ -615,9 +624,9 @@ function publicState(room, playerId) {
     phase: room.phase,
     hostId: room.hostId,
     meId: playerId,
-    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile, turnsTaken, isBot, botStyle: style }) => ({
+    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile, turnsTaken, spotlightUsed, hypeUsed, challengeUsed, isBot, botStyle: style }) => ({
       id, name, score, shieldAvailable, frozen, stats, ready, career, profile: profileSummary(profile),
-      turnsTaken: Number(turnsTaken || 0), isBot: Boolean(isBot), botStyle: isBot ? botStyle(style).id : null
+      turnsTaken: Number(turnsTaken || 0), spotlightUsed: Boolean(spotlightUsed), hypeUsed: Boolean(hypeUsed), challengeUsed: Boolean(challengeUsed), isBot: Boolean(isBot), botStyle: isBot ? botStyle(style).id : null
     })),
     spectators: (room.spectators || []).map(({ id, name, profile }) => ({ id, name, profile: profileSummary(profile) })),
     meRole: room.players.some(player => player.id === playerId) ? 'player' : 'spectator',
@@ -643,6 +652,8 @@ function publicState(room, playerId) {
     message: room.message,
     chat: (room.chat || []).map(({ id, playerId: senderId, name, text, at }) => ({ id, playerId: senderId, name, text, at })),
     reactions: (room.reactions || []).slice(-12),
+    spotlight: room.spotlight || null,
+    powerEffect: room.powerEffect || null,
     events: (room.events || []).slice(-50),
     awards: awardsFor(room),
     allReady: room.players.length >= 2 && room.players.every(player => player.ready),
@@ -889,6 +900,8 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
     room.matchStartedAt = Date.now();
     room.matchArchived = false;
     room.events = [];
+    room.spotlight = null;
+    room.powerEffect = null;
     room.players.forEach(candidate => {
       if (room.mode === 'battle') {
         candidate.score = 30;
@@ -897,6 +910,9 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
       candidate.matchBanked = 0;
       candidate.matchFreezes = 0;
       candidate.turnsTaken = 0;
+      candidate.spotlightUsed = false;
+      candidate.hypeUsed = false;
+      candidate.challengeUsed = false;
     });
     room.departedPlayers = [];
     room.lastOutcome = null;
@@ -925,6 +941,9 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
       player.matchFreezes = 0;
       player.ready = Boolean(player.isBot);
       player.turnsTaken = 0;
+      player.spotlightUsed = false;
+      player.hypeUsed = false;
+      player.challengeUsed = false;
     });
     room.phase = 'lobby';
     room.turnIndex = 0;
@@ -938,6 +957,8 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
     room.lastReward = null;
     room.lastOutcome = null;
     room.winnerId = null;
+    room.spotlight = null;
+    room.powerEffect = null;
     room.showdownRoundLimit = 5;
     room.showdownSuddenDeath = false;
     room.showdownContenders = [];
@@ -952,6 +973,53 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
 
   if (room.phase !== 'playing') throw Object.assign(new Error('The game is not active.'), { status: 409 });
   if (room.paused) throw Object.assign(new Error('FALCON paused this room.'), { status: 409 });
+
+  if (type === 'spotlight') {
+    const player = room.players[playerIndex];
+    const benefits = new Set((player.profile?.subscription?.benefits || []).map(benefit => benefit.key));
+    if (!benefits.has('spotlight_power')) throw Object.assign(new Error('Legend Spotlight requires an active Legend plan.'), { status: 403 });
+    if (player.spotlightUsed) throw Object.assign(new Error('You already used your Legend Spotlight this match.'), { status: 409 });
+    player.spotlightUsed = true;
+    room.spotlight = { id: crypto.randomUUID(), playerId: player.id, name: player.name, at: Date.now() };
+    room.message = `✦ ${player.name} activated LEGEND SPOTLIGHT — own the night!`;
+    room.reactions.push({ id: crypto.randomUUID(), playerId, name: player.name, emoji: '✦', at: Date.now() });
+    room.reactions = room.reactions.slice(-30);
+    addEvent(room, 'spotlight', room.message, { actorId: player.id });
+    bump(room);
+    persistRooms();
+    return;
+  }
+
+  if (type === 'hype') {
+    const player = room.players[playerIndex];
+    const benefits = new Set((player.profile?.subscription?.benefits || []).map(benefit => benefit.key));
+    if (!benefits.has('hype_power')) throw Object.assign(new Error('Hype Storm requires an active Royale or Legend plan.'), { status: 403 });
+    if (player.hypeUsed) throw Object.assign(new Error('You already used Hype Storm this match.'), { status: 409 });
+    player.hypeUsed = true;
+    const emojis = ['🔥','⚡','👑','🎉','🦅','🔥','⚡','👑','🎉','👏','🔥','⚡'];
+    const at = Date.now();
+    room.reactions.push(...emojis.map((emoji, index) => ({ id: crypto.randomUUID(), playerId, name: player.name, emoji, at: at + index })));
+    room.reactions = room.reactions.slice(-30);
+    room.powerEffect = { id: crypto.randomUUID(), type: 'hype', playerId, name: player.name, at };
+    room.message = `⚡ ${player.name} unleashed a HYPE STORM!`;
+    addEvent(room, 'hype', room.message, { actorId: player.id });
+    bump(room); persistRooms(); return;
+  }
+
+  if (type === 'challenge') {
+    const player = room.players[playerIndex];
+    const benefits = new Set((player.profile?.subscription?.benefits || []).map(benefit => benefit.key));
+    if (!benefits.has('challenge_power')) throw Object.assign(new Error('Crown Challenge requires an active Legend plan.'), { status: 403 });
+    if (player.challengeUsed) throw Object.assign(new Error('You already used Crown Challenge this match.'), { status: 409 });
+    const rival = [...room.players].filter(candidate => candidate.id !== playerId).sort((left, right) => right.score - left.score)[0];
+    if (!rival) throw Object.assign(new Error('There is nobody to challenge.'), { status: 409 });
+    player.challengeUsed = true;
+    room.powerEffect = { id: crypto.randomUUID(), type: 'challenge', playerId, name: player.name, targetId: rival.id, targetName: rival.name, at: Date.now() };
+    room.message = `⚔ ${player.name} challenged ${rival.name} for the crown!`;
+    addEvent(room, 'challenge', room.message, { actorId: player.id, targetId: rival.id });
+    bump(room); persistRooms(); return;
+  }
+
   if (playerIndex !== room.turnIndex) throw Object.assign(new Error('Wait for your turn.'), { status: 409 });
 
   const player = room.players[playerIndex];
@@ -1094,6 +1162,9 @@ function resetMatch(room) {
     player.matchFreezes = 0;
     player.ready = Boolean(player.isBot);
     player.turnsTaken = 0;
+    player.spotlightUsed = false;
+    player.hypeUsed = false;
+    player.challengeUsed = false;
   });
   room.phase = 'lobby';
   room.paused = false;
@@ -1108,6 +1179,8 @@ function resetMatch(room) {
   room.lastReward = null;
   room.lastOutcome = null;
   room.winnerId = null;
+  room.spotlight = null;
+  room.powerEffect = null;
   room.showdownRoundLimit = 5;
   room.showdownSuddenDeath = false;
   room.showdownContenders = [];
@@ -1286,7 +1359,7 @@ function serveStatic(req, res) {
       return;
     }
     const ext = path.extname(filePath);
-    const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
+    const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.webm': 'video/webm', '.mp4': 'video/mp4' };
     res.writeHead(200, {
       'Content-Type': `${types[ext] || 'application/octet-stream'}; charset=utf-8`,
       'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600'
@@ -1306,6 +1379,24 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/leaderboard') {
       return sendJson(res, 200, { version: APP_VERSION, leaderboard: await profiles.leaderboard(url.searchParams.get('limit'), url.searchParams.get('sort')) });
+    }
+
+    if (parts[0] === 'api' && parts[1] === 'subscriptions') {
+      if (req.method === 'GET' && parts[2] === 'plans' && parts.length === 3) {
+        return sendJson(res, 200, profiles.subscriptionCatalog());
+      }
+      if (req.method === 'GET' && parts[2] === 'me' && parts.length === 3) {
+        const profile = await profiles.authenticate(bearerToken(req));
+        if (!profile) return sendJson(res, 401, { error: 'Sign in to view your subscription.' });
+        return sendJson(res, 200, await profiles.subscriptionStatus(profile.id));
+      }
+      if (req.method === 'POST' && parts[2] === 'requests' && parts.length === 3) {
+        const profile = await profiles.authenticate(bearerToken(req));
+        if (!profile) return sendJson(res, 401, { error: 'Sign in before submitting a payment.' });
+        const payload = await readJson(req);
+        return sendJson(res, 201, { request: await profiles.requestSubscription(profile.id, payload) });
+      }
+      return sendJson(res, 404, { error: 'Subscription route not found.' });
     }
 
     if (parts[0] === 'api' && parts[1] === 'profiles') {
@@ -1346,6 +1437,13 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && parts[2] === 'profiles' && parts.length === 3) {
         return sendJson(res, 200, { profiles: await profiles.adminList() });
       }
+      if (req.method === 'PATCH' && parts[2] === 'profiles' && parts[3] && parts[4] === 'subscription' && parts.length === 5) {
+        const profileId = decodeURIComponent(parts[3]);
+        const payload = await readJson(req);
+        const updated = await profiles.adminSetSubscription(profileId, payload);
+        const roomsUpdated = syncProfileAcrossRooms(profileId, updated.profile.displayName, updated.profile);
+        return sendJson(res, 200, { ...updated, roomsUpdated });
+      }
       if (req.method === 'PATCH' && parts[2] === 'profiles' && parts[3] && parts.length === 4) {
         const profileId = decodeURIComponent(parts[3]);
         const changes = await readJson(req);
@@ -1364,13 +1462,24 @@ const server = http.createServer(async (req, res) => {
         const removal = removeProfileReferencesFromRooms([{ profileId, displayName: deleted.displayName }]);
         if (removal.roomsUpdated || removal.roomsRetired) {
           persistRooms();
-          persistRooms();
         }
         if (removal.roomsRetired) persistRetiredRooms();
         return sendJson(res, 200, { deleted: true, profile: deleted, recordsRemoved, ...removal });
       }
       if (req.method === 'GET' && parts[2] === 'records' && parts.length === 3) {
         return sendJson(res, 200, await recordsStore.records(url.searchParams.get('limit')));
+      }
+      if (req.method === 'GET' && parts[2] === 'subscriptions' && parts.length === 3) {
+        return sendJson(res, 200, await profiles.adminSubscriptions());
+      }
+      if (req.method === 'PATCH' && parts[2] === 'subscriptions' && parts[3] && parts.length === 4) {
+        const payload = await readJson(req);
+        const result = await profiles.reviewPayment(decodeURIComponent(parts[3]), payload.status);
+        if (result.request.status === 'approved') {
+          const profile = await profiles.byId(result.request.profileId);
+          if (profile) syncProfileAcrossRooms(profile.id, profile.displayName, profile);
+        }
+        return sendJson(res, 200, result);
       }
       if (req.method === 'GET' && parts[2] === 'rooms' && parts.length === 3) {
         return sendJson(res, 200, { rooms: [...rooms.values()].map(adminRoomState) });

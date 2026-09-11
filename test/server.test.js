@@ -62,7 +62,7 @@ test('room state never exposes private profile identifiers', () => {
   const { room, player } = createRoom('Ada');
   player.profile = { id: 'private-id', profileCode: 'SECRET88', level: 4, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] };
   const profile = publicState(room, player.id).players[0].profile;
-  assert.deepEqual(profile, { level: 4, featuredTitle: null, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] });
+  assert.deepEqual(profile, { level: 4, featuredTitle: null, subscription: null, achievements: [{ key: 'winner', name: 'Winner', icon: '🏆' }] });
   assert.equal('id' in profile, false);
   assert.equal('profileCode' in profile, false);
   rooms.delete(room.code);
@@ -501,11 +501,11 @@ test('private admin HTTP routes require the configured key', async () => {
   assert.equal(authorized.status, 200);
 });
 
-test('health identifies the V3.1 JSON server', async () => {
+test('health identifies the V3.2 JSON server', async () => {
   const response = await request('/api/health', null, 'GET');
   assert.equal(response.status, 200);
   assert.deepEqual(response.data, { ok: true, rooms: rooms.size, storage: 'json', version: APP_VERSION });
-  assert.equal(APP_VERSION, '3.1.0');
+  assert.equal(APP_VERSION, '3.2.0');
 });
 
 test('every built-in game mode starts with a 10-second turn', () => {
@@ -520,13 +520,74 @@ test('public leaderboard ranks profiles without exposing identity secrets', asyn
   const entry = response.data.leaderboard.find(player => player.displayName === 'Public Her');
   assert.ok(entry);
   assert.deepEqual(Object.keys(entry).sort(), [
-    'achievementCount', 'bestBank', 'displayName', 'games', 'level', 'rank',
+    'achievementCount', 'bestBank', 'displayName', 'games', 'level', 'rank', 'subscription',
     'totalBanked', 'winRate', 'wins', 'xp'
   ]);
   const serialized = JSON.stringify(response.data);
   for (const privateField of ['profileCode', 'pinHash', 'pinSalt', 'tokenHash', 'lastSeenAt', 'id']) {
     assert.equal(serialized.includes(`"${privateField}"`), false);
   }
+});
+
+test('subscriptions use fixed OPay plans and require FALCON approval', async () => {
+  const catalog = await request('/api/subscriptions/plans', null, 'GET');
+  assert.equal(catalog.status, 200);
+  assert.deepEqual(catalog.data.account, { provider: 'OPay', accountName: 'FALCON', accountNumber: '9021538491' });
+  assert.deepEqual(catalog.data.plans.map(plan => [plan.id, plan.price, plan.durationDays]), [
+    ['night', 200, 7], ['royale', 500, 30], ['legend', 1000, 60]
+  ]);
+  assert.equal(catalog.data.plans.find(plan => plan.id === 'legend').benefits.some(benefit => benefit.key === 'spotlight_power'), true);
+
+  const unauthorized = await request('/api/subscriptions/requests', { planId: 'legend', payerName: 'Nobody', reference: '1234' });
+  assert.equal(unauthorized.status, 401);
+  const created = await request('/api/profiles', { displayName: 'SubTester', pin: '246810' });
+  assert.equal(created.status, 201);
+  const authorization = { Authorization: `Bearer ${created.data.profileToken}` };
+  const submitted = await request('/api/subscriptions/requests', { planId: 'royale', amount: 1, payerName: 'Test Payer', reference: 'OPAY-8899' }, 'POST', authorization);
+  assert.equal(submitted.status, 201);
+  assert.equal(submitted.data.request.amount, 500);
+  assert.equal(submitted.data.request.status, 'pending');
+  const duplicate = await request('/api/subscriptions/requests', { planId: 'night', payerName: 'Test Payer', reference: 'OPAY-9988' }, 'POST', authorization);
+  assert.equal(duplicate.status, 409);
+
+  const admin = { Authorization: 'Bearer test-admin-key' };
+  const queue = await request('/api/admin/subscriptions', null, 'GET', admin);
+  const pending = queue.data.requests.find(item => item.id === submitted.data.request.id);
+  assert.equal(pending.status, 'pending');
+  const approved = await request(`/api/admin/subscriptions/${pending.id}`, { status: 'approved' }, 'PATCH', admin);
+  assert.equal(approved.status, 200);
+  assert.equal(approved.data.subscription.planId, 'royale');
+  assert.equal(approved.data.subscription.benefits.some(benefit => benefit.key === 'hype_power'), true);
+  const status = await request('/api/subscriptions/me', null, 'GET', authorization);
+  assert.equal(status.data.subscription.planId, 'royale');
+
+  const granted = await request(`/api/admin/profiles/${created.data.profile.id}/subscription`, { planId: 'legend' }, 'PATCH', admin);
+  assert.equal(granted.status, 200);
+  assert.equal(granted.data.subscription.planId, 'legend');
+  const removed = await request(`/api/admin/profiles/${created.data.profile.id}/subscription`, { planId: 'none' }, 'PATCH', admin);
+  assert.equal(removed.status, 200);
+  assert.equal(removed.data.subscription, null);
+});
+
+test('subscriber powers are once-per-match social effects without score changes', () => {
+  const { room, player } = createRoom('Legend');
+  room.players.push({ id: 'rival', name: 'Rival', score: 30, ready: true, joinedAt: Date.now() });
+  room.phase = 'playing';
+  room.matchId = 1;
+  room.turnIndex = 1;
+  player.profile = { level: 1, achievements: [], subscription: { planId: 'legend', benefits: [{ key: 'hype_power' }, { key: 'challenge_power' }, { key: 'spotlight_power' }] } };
+  const originalScores = room.players.map(candidate => candidate.score);
+
+  action(room, player.id, 'hype');
+  assert.equal(player.hypeUsed, true);
+  assert.equal(room.powerEffect.type, 'hype');
+  assert.throws(() => action(room, player.id, 'hype'), /already used/);
+  action(room, player.id, 'challenge');
+  assert.equal(room.powerEffect.targetId, 'rival');
+  action(room, player.id, 'spotlight');
+  assert.equal(player.spotlightUsed, true);
+  assert.deepEqual(room.players.map(candidate => candidate.score), originalScores);
+  rooms.delete(room.code);
 });
 
 test('host can add and remove auto-ready practice players', () => {

@@ -7,6 +7,64 @@ const scrypt = promisify(crypto.scrypt);
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_DISPLAY_NAME_LENGTH = 10;
 const REMOVED_PROFILE_NAME = 'ALOYINLEPONSMALLIE';
+const SUBSCRIPTION_ACCOUNT = Object.freeze({ provider: 'OPay', accountName: 'FALCON', accountNumber: '9021538491' });
+const SUBSCRIPTION_PLANS = Object.freeze({
+  night: Object.freeze({
+    id: 'night', name: 'Night Pass', price: 200, durationDays: 7, rank: 1,
+    benefits: Object.freeze([
+      { key: 'glass_card', label: 'Supporter glass player card' },
+      { key: 'turn_alerts', label: 'Louder smart turn alerts', helper: true },
+      { key: 'risk_coach', label: 'Exact live risk coach', helper: true },
+      { key: 'leader_gap', label: 'Live leader-gap tracker', helper: true },
+      { key: 'timer_pace', label: 'Final-three-second pace cue', helper: true },
+      { key: 'reaction_pack', label: 'Exclusive reaction pack' },
+      { key: 'chat_accent', label: 'Premium chat accent' }
+    ])
+  }),
+  royale: Object.freeze({
+    id: 'royale', name: 'Royale', price: 500, durationDays: 30, rank: 2,
+    benefits: Object.freeze([
+      { key: 'glass_card', label: 'Royale glass player card' },
+      { key: 'turn_alerts', label: 'Louder smart turn alerts', helper: true },
+      { key: 'risk_coach', label: 'Exact live risk coach', helper: true },
+      { key: 'streak_forecast', label: 'Hot-streak forecast', helper: true },
+      { key: 'bank_hint', label: 'Smart bank-or-roll hint', helper: true },
+      { key: 'leader_gap', label: 'Live leader-gap tracker', helper: true },
+      { key: 'timer_pace', label: 'Final-three-second pace cue', helper: true },
+      { key: 'mode_tip', label: 'Mode-specific strategy tip', helper: true },
+      { key: 'personal_best', label: 'Personal-best tracker', helper: true },
+      { key: 'hype_power', label: 'Once-per-match Hype Storm power' },
+      { key: 'dice_skin', label: 'Premium dice skin' },
+      { key: 'entrance_animation', label: 'Animated room entrance' },
+      { key: 'sound_pack', label: 'Premium sound pack' },
+      { key: 'detailed_stats', label: 'Detailed live statistics' }
+    ])
+  }),
+  legend: Object.freeze({
+    id: 'legend', name: 'Legend', price: 1000, durationDays: 60, rank: 3,
+    benefits: Object.freeze([
+      { key: 'glass_card', label: 'Legend glass player card' },
+      { key: 'turn_alerts', label: 'Louder smart turn alerts', helper: true },
+      { key: 'risk_coach', label: 'Exact live risk coach', helper: true },
+      { key: 'streak_forecast', label: 'Hot-streak forecast', helper: true },
+      { key: 'bank_hint', label: 'Smart bank-or-roll hint', helper: true },
+      { key: 'match_recap', label: 'Personal match recap', helper: true },
+      { key: 'leader_gap', label: 'Live leader-gap tracker', helper: true },
+      { key: 'timer_pace', label: 'Final-three-second pace cue', helper: true },
+      { key: 'mode_tip', label: 'Mode-specific strategy tip', helper: true },
+      { key: 'personal_best', label: 'Personal-best tracker', helper: true },
+      { key: 'endgame_warning', label: 'Rival endgame warning', helper: true },
+      { key: 'hype_power', label: 'Once-per-match Hype Storm power' },
+      { key: 'challenge_power', label: 'Once-per-match Crown Challenge power' },
+      { key: 'spotlight_power', label: 'Once-per-match Legend Spotlight power' },
+      { key: 'vip_aura', label: 'Animated VIP aura' },
+      { key: 'winner_song', label: 'Winner-song choice' },
+      { key: 'premium_lobby', label: 'Premium lobby theme' },
+      { key: 'custom_title', label: 'Admin-approved custom title' },
+      { key: 'detailed_stats', label: 'Detailed live statistics' }
+    ])
+  })
+});
 
 const PROFILE_TITLES = Object.freeze({
   founder: { label: 'Founder', icon: '♛', variant: 'founder' },
@@ -53,6 +111,42 @@ function levelFor(xp) {
   return Math.max(1, Math.floor(Math.sqrt(Math.max(0, xp) / 200)) + 1);
 }
 
+function safePlan(planId) {
+  return SUBSCRIPTION_PLANS[String(planId || '').toLowerCase()] || null;
+}
+
+function subscriptionView(profile, now = Date.now()) {
+  const subscription = profile?.subscription;
+  const plan = safePlan(subscription?.planId);
+  const expiresAt = subscription?.expiresAt || null;
+  const active = Boolean(plan && subscription?.status === 'active' && new Date(expiresAt).getTime() > now);
+  if (!plan || !active) return null;
+  return {
+    planId: plan.id,
+    name: plan.name,
+    status: 'active',
+    startsAt: subscription.startsAt || null,
+    expiresAt,
+    benefits: plan.benefits.map(benefit => ({ ...benefit }))
+  };
+}
+
+function publicPaymentRequest(request) {
+  return {
+    id: request.id,
+    profileId: request.profileId,
+    profileName: request.profileName,
+    planId: request.planId,
+    planName: safePlan(request.planId)?.name || request.planId,
+    amount: request.amount,
+    payerName: request.payerName,
+    reference: request.reference,
+    status: request.status,
+    submittedAt: request.submittedAt,
+    reviewedAt: request.reviewedAt || null
+  };
+}
+
 function profileCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   return Array.from(crypto.randomBytes(8), byte => alphabet[byte % alphabet.length]).join('');
@@ -94,7 +188,7 @@ function earnedKeys(profile) {
 class ProfileService {
   constructor(options = {}) {
     this.file = options.file || process.env.PROFILE_FILE || path.join(__dirname, 'data', 'profiles.json');
-    this.local = { profiles: [], sessions: [], achievements: [], completedMatches: [] };
+    this.local = { profiles: [], sessions: [], achievements: [], completedMatches: [], paymentRequests: [], subscriptionEvents: [] };
   }
 
   async initialize() {
@@ -103,7 +197,9 @@ class ProfileService {
       profiles: Array.isArray(saved.profiles) ? saved.profiles : [],
       sessions: Array.isArray(saved.sessions) ? saved.sessions : [],
       achievements: Array.isArray(saved.achievements) ? saved.achievements : [],
-      completedMatches: Array.isArray(saved.completedMatches) ? saved.completedMatches : []
+      completedMatches: Array.isArray(saved.completedMatches) ? saved.completedMatches : [],
+      paymentRequests: Array.isArray(saved.paymentRequests) ? saved.paymentRequests : [],
+      subscriptionEvents: Array.isArray(saved.subscriptionEvents) ? saved.subscriptionEvents : []
     };
     const removedProfiles = this.local.profiles
       .filter(profile => String(profile.displayName || '').trim().toUpperCase() === REMOVED_PROFILE_NAME)
@@ -117,6 +213,8 @@ class ProfileService {
         if (typeof item === 'string') return ![...removedProfileIds].some(profileId => item.startsWith(`${profileId}:`));
         return !removedProfileIds.has(item?.profileId);
       });
+      this.local.paymentRequests = this.local.paymentRequests.filter(request => !removedProfileIds.has(request.profileId));
+      this.local.subscriptionEvents = this.local.subscriptionEvents.filter(event => !removedProfileIds.has(event.profileId));
     }
 
     const renamedProfiles = [];
@@ -166,7 +264,6 @@ class ProfileService {
       }
     }
     if (changed) this.persistLocal();
-    if (removedProfileIds.size) this.persistLocal();
     return { renamedProfiles, removedProfiles };
   }
 
@@ -270,7 +367,8 @@ class ProfileService {
         key: item.key,
         unlockedAt: item.unlockedAt,
         ...ACHIEVEMENTS[item.key]
-      }))
+      })),
+      subscription: subscriptionView(profile)
     };
   }
 
@@ -305,7 +403,8 @@ class ProfileService {
           winRate: games ? Number(((wins / games) * 100).toFixed(1)) : 0,
           bestBank: Number(profile.bestBank || 0),
           totalBanked: Number(profile.totalBanked || 0),
-          achievementCount: achievementCounts.get(profile.id) || 0
+          achievementCount: achievementCounts.get(profile.id) || 0,
+          subscription: subscriptionView(profile)
         };
       });
   }
@@ -328,7 +427,8 @@ class ProfileService {
           : null,
         achievementCount: achievementCounts.get(profile.id) || 0,
         createdAt: profile.createdAt || null,
-        lastSeenAt: profile.lastSeenAt || null
+        lastSeenAt: profile.lastSeenAt || null,
+        subscription: subscriptionView(profile)
       }))
       .sort((left, right) => left.displayName.localeCompare(right.displayName));
   }
@@ -390,7 +490,8 @@ class ProfileService {
       if (typeof item === 'string') return !item.startsWith(`${id}:`);
       return item?.profileId !== id;
     });
-    this.persistLocal();
+    this.local.paymentRequests = this.local.paymentRequests.filter(request => request.profileId !== id);
+    this.local.subscriptionEvents = this.local.subscriptionEvents.filter(event => event.profileId !== id);
     this.persistLocal();
     return { id: profile.id, displayName: profile.displayName };
   }
@@ -439,9 +540,107 @@ class ProfileService {
     this.persistLocal();
     return { profilesReset: this.local.profiles.length };
   }
+
+  subscriptionCatalog() {
+    return {
+      account: { ...SUBSCRIPTION_ACCOUNT },
+      plans: Object.values(SUBSCRIPTION_PLANS).map(plan => ({
+        ...plan,
+        benefits: plan.benefits.map(benefit => ({ ...benefit }))
+      }))
+    };
+  }
+
+  async subscriptionStatus(profileId) {
+    const profile = this.local.profiles.find(item => item.id === profileId);
+    if (!profile) throw Object.assign(new Error('Profile not found.'), { status: 404 });
+    const pending = this.local.paymentRequests
+      .filter(request => request.profileId === profileId && request.status === 'pending')
+      .map(publicPaymentRequest);
+    return { subscription: subscriptionView(profile), pending };
+  }
+
+  async requestSubscription(profileId, values = {}) {
+    const profile = this.local.profiles.find(item => item.id === profileId);
+    if (!profile) throw Object.assign(new Error('Profile not found.'), { status: 404 });
+    const plan = safePlan(values.planId);
+    if (!plan) throw Object.assign(new Error('Choose a valid subscription plan.'), { status: 400 });
+    const payerName = String(values.payerName || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    const reference = String(values.reference || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    if (payerName.length < 2) throw Object.assign(new Error('Enter the name used for the OPay transfer.'), { status: 400 });
+    if (reference.length < 4) throw Object.assign(new Error('Enter the transfer reference or last four reference characters.'), { status: 400 });
+    if (this.local.paymentRequests.some(request => request.profileId === profileId && request.status === 'pending')) {
+      throw Object.assign(new Error('You already have a payment waiting for FALCON to review.'), { status: 409 });
+    }
+    const request = {
+      id: crypto.randomUUID(), profileId, profileName: profile.displayName,
+      planId: plan.id, amount: plan.price, payerName, reference,
+      status: 'pending', submittedAt: new Date().toISOString(), reviewedAt: null
+    };
+    this.local.paymentRequests.push(request);
+    this.persistLocal();
+    return publicPaymentRequest(request);
+  }
+
+  setSubscription(profile, planId, options = {}) {
+    const plan = safePlan(planId);
+    if (!plan) throw Object.assign(new Error('Choose a valid subscription plan.'), { status: 400 });
+    const now = new Date();
+    const currentExpiry = new Date(profile.subscription?.expiresAt || 0);
+    const startsAt = options.startsAt ? new Date(options.startsAt) : now;
+    const base = currentExpiry.getTime() > now.getTime() && profile.subscription?.planId === plan.id ? currentExpiry : startsAt;
+    const expiresAt = options.expiresAt ? new Date(options.expiresAt) : new Date(base.getTime() + plan.durationDays * 86400000);
+    if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(expiresAt.getTime()) || expiresAt <= startsAt) {
+      throw Object.assign(new Error('Choose a valid subscription date range.'), { status: 400 });
+    }
+    profile.subscription = { planId: plan.id, status: 'active', startsAt: startsAt.toISOString(), expiresAt: expiresAt.toISOString() };
+    return subscriptionView(profile);
+  }
+
+  async reviewPayment(requestId, status) {
+    const request = this.local.paymentRequests.find(item => item.id === requestId);
+    if (!request) throw Object.assign(new Error('Payment request not found.'), { status: 404 });
+    if (request.status !== 'pending') throw Object.assign(new Error('This payment request has already been reviewed.'), { status: 409 });
+    if (!['approved', 'rejected'].includes(status)) throw Object.assign(new Error('Choose approved or rejected.'), { status: 400 });
+    const profile = this.local.profiles.find(item => item.id === request.profileId);
+    if (!profile) throw Object.assign(new Error('Profile not found.'), { status: 404 });
+    request.status = status;
+    request.reviewedAt = new Date().toISOString();
+    let subscription = subscriptionView(profile);
+    if (status === 'approved') subscription = this.setSubscription(profile, request.planId);
+    this.local.subscriptionEvents.push({ id: crypto.randomUUID(), profileId: profile.id, type: `payment_${status}`, planId: request.planId, at: request.reviewedAt });
+    this.persistLocal();
+    return { request: publicPaymentRequest(request), subscription };
+  }
+
+  async adminSetSubscription(profileId, values = {}) {
+    const profile = this.local.profiles.find(item => item.id === profileId);
+    if (!profile) throw Object.assign(new Error('Profile not found.'), { status: 404 });
+    const planId = String(values.planId || '').toLowerCase();
+    if (planId === 'none') {
+      delete profile.subscription;
+      this.local.subscriptionEvents.push({ id: crypto.randomUUID(), profileId, type: 'subscription_removed', planId: null, at: new Date().toISOString() });
+      this.persistLocal();
+      return { profile: await this.byId(profileId), subscription: null };
+    }
+    const subscription = this.setSubscription(profile, planId, { startsAt: values.startsAt, expiresAt: values.expiresAt });
+    this.local.subscriptionEvents.push({ id: crypto.randomUUID(), profileId, type: 'subscription_assigned', planId, at: new Date().toISOString() });
+    this.persistLocal();
+    return { profile: await this.byId(profileId), subscription };
+  }
+
+  async adminSubscriptions() {
+    return {
+      ...this.subscriptionCatalog(),
+      pendingCount: this.local.paymentRequests.filter(request => request.status === 'pending').length,
+      requests: [...this.local.paymentRequests].sort((left, right) => String(right.submittedAt).localeCompare(String(left.submittedAt))).map(publicPaymentRequest),
+      events: [...this.local.subscriptionEvents].slice(-50).reverse()
+    };
+  }
 }
 
 module.exports = {
   ProfileService, ACHIEVEMENTS, PROFILE_TITLES, MAX_DISPLAY_NAME_LENGTH,
-  cleanDisplayName, normalizeCode, normalizeLoginIdentifier, levelFor
+  cleanDisplayName, normalizeCode, normalizeLoginIdentifier, levelFor,
+  SUBSCRIPTION_ACCOUNT, SUBSCRIPTION_PLANS, subscriptionView
 };

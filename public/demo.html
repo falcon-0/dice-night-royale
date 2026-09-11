@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07111e">
+  <title>Dice Night V3.2 · Full Simulation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,600;6..72,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/demo.css?v=321">
+</head>
+<body>
+  <header><a href="/">‹ Back to game</a><div><span>FALCON STUDIO</span><strong>Dice Night Simulation</strong></div><b>DEMO · NO LIVE DATA</b></header>
+  <main>
+    <section class="demo-heading"><div><p>V3.2 NIGHT CLUB TOUR</p><h1>Watch the whole game<br><em>play itself.</em></h1></div><div class="demo-controls"><button id="restart">↻ Restart</button><button id="play-pause">Pause</button></div></section>
+    <div class="story-progress"><span id="progress"></span></div>
+    <nav id="chapters" aria-label="Demo chapters"></nav>
+
+    <section id="game-table" class="game-table">
+      <div class="table-top"><div><span id="scene-kicker">ROOM CREATED</span><h2 id="scene-title">FALCON opens the table</h2></div><div class="room-code"><small>ROOM</small><strong>NIGHT</strong></div></div>
+      <div class="table-message"><span id="scene-icon">✦</span><p id="scene-message">Friends can join from any phone using one shared link.</p><time id="scene-time">10.0s</time></div>
+      <div id="players" class="demo-players"></div>
+      <div class="demo-play-zone">
+        <section class="dice-zone">
+          <p>CHOOSE YOUR DICE</p>
+          <div class="demo-dice"><article id="normal-die"><span class="die">⚄</span><div><b>Normal Die</b><small>Safer · builds 2–6</small></div></article><article id="deadly-die"><span class="die">☠</span><div><b>Deadly Risk Die</b><small>+10 · +20 · +30</small></div></article></div>
+          <div class="turn-pot"><span>TURN POT</span><strong id="turn-pot">0</strong><small id="risk-label">16% bust risk</small></div>
+          <div class="core-actions"><button id="bank-button">Bank points</button><button id="freeze-demo-button">❄ Freeze · costs 5 saved points</button></div>
+          <div id="power-buttons" class="power-buttons"><button>⚡ Hype Storm</button><button>⚔ Crown Challenge</button><button>✦ Legend Spotlight</button></div>
+        </section>
+        <aside><div class="assistant"><span>LEGEND NIGHT ASSISTANT</span><strong id="coach">Normal is the calm opening.</strong><div><b id="gap">Leader gap 0</b><b id="best">Best bank 40</b></div></div><div class="chat"><div><strong>Room chat</strong><i>4 online</i></div><p><b>ISSA</b> tonight is mine 😂</p><p><b>FALCON</b> roll first, talk later 🦅</p><p id="chat-new"><b>JOY</b> this update is clean 🔥</p></div></aside>
+      </div>
+      <div id="takeover" class="takeover"><span>✦</span><small>LEGEND SPOTLIGHT</small><strong>FALCON</strong><em>owns the night</em></div>
+      <div id="plan-showcase" class="plan-showcase">
+        <div class="plan-demo-card"><span id="plan-demo-label">NIGHT PASS</span><strong id="plan-demo-price">₦200</strong><small id="plan-demo-duration">7 DAYS</small><h3 id="plan-demo-title">Start the night smarter.</h3><div id="plan-demo-benefits"></div><p id="plan-demo-flow">OPay transfer → send reference → FALCON approves</p></div>
+      </div>
+      <div id="winner" class="winner"><span>♛</span><small>WE HAVE A WINNER</small><strong>FALCON</strong><p>120 points · 14 rolls · 40 biggest bank</p><div>🏆 Crown claimed · 🎵 Winner anthem playing</div></div>
+    </section>
+    <section class="recorded-demo"><div><p>RECORDED WALKTHROUGH</p><h2>Prefer a normal video?</h2><span>Play, pause, scrub, or open it full screen.</span></div><video controls preload="metadata" src="/dice-night-v32-simulation.webm?v=2">Your browser cannot play the simulation video.</video></section>
+    <p class="demo-note">This is a safe visual simulation. It does not create rooms, profiles, payments, or leaderboard records.</p>
+  </main>
+  <script src="/demo.js?v=321"></script>
+</body>
+</html>

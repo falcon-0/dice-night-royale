@@ -1,8 +1,8 @@
 {
   "name": "dice-night-royale",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
-  "description": "Dice Night Royale V3.1 — a real-time social push-your-luck game",
+  "description": "Dice Night Royale V3.2 — a real-time social push-your-luck game",
   "scripts": {
     "start": "node server.js",
     "test": "node --test"

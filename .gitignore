@@ -10,6 +10,9 @@ data/
 # Local server output and visual test captures
 *.log
 *.png
+artifacts/
+scripts/record-demo.js
+scripts/verify-ui.js
 
 # One-off live operations (not application source)
 capture-live-state.js

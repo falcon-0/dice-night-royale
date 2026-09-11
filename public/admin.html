@@ -3,58 +3,54 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0b1210">
-  <title>Falcon Royale Control Deck</title>
+  <meta name="theme-color" content="#0a1119">
+  <title>FALCON · Dice Night Control Room</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin.css?v=32">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,600;6..72,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin.css?v=320">
 </head>
 <body>
   <header>
-    <div class="admin-brand"><span>♛</span><div><small>FALCON</small><strong>Control Deck</strong></div></div>
-    <div class="header-actions"><span id="connection"><i></i> Live</span><button id="lock-button">Lock panel</button></div>
+    <a class="admin-brand" href="/" aria-label="Back to Dice Night"><span>♛</span><div><small>FALCON STUDIO</small><strong>Control Room</strong></div></a>
+    <div class="header-actions"><span id="connection"><i></i> Live</span><a href="/" class="ghost-link">Game ↗</a><button id="lock-button">Lock panel</button></div>
   </header>
-
   <main>
     <section class="hero">
-      <div><p class="eyebrow">PRIVATE ADMIN CONSOLE</p><h1>The whole table,<br><em>under control.</em></h1></div>
-      <div class="totals"><article><small>ROOMS</small><strong id="room-total">0</strong></article><article><small>PLAYERS</small><strong id="player-total">0</strong></article><article><small>PLAYING</small><strong id="playing-total">0</strong></article></div>
-    </section>
-    <section class="records-panel">
-      <div class="section-head">
-        <div><p class="eyebrow">LOCAL RECORD BOOK</p><h2>Match history</h2><p id="records-status">Loading saved match records…</p></div>
-      </div>
-      <div class="record-totals">
-        <article><small>MATCHES</small><strong id="match-total">0</strong></article>
-        <article><small>RECORDED PLAYERS</small><strong id="record-player-total">0</strong></article>
-        <article><small>ROLLS</small><strong id="roll-total">0</strong></article>
-        <article><small>BUSTS</small><strong id="bust-total">0</strong></article>
-      </div>
-      <div class="record-grids">
-        <div><h3>Recent winners</h3><div id="recent-records" class="record-list"><p>No completed matches recorded yet.</p></div></div>
-        <div><h3>Leaderboard</h3><div id="record-leaderboard" class="record-list"><p>Leaderboard appears after the first recorded match.</p></div></div>
+      <div><p class="eyebrow">PRIVATE ADMIN PANEL · V3.2</p><h1>Your game night,<br><em>at a glance.</em></h1><p>Approve plans, manage players, and control every live room from one place.</p></div>
+      <div class="totals">
+        <article><small>ROOMS</small><strong id="room-total">0</strong></article>
+        <article><small>PLAYERS</small><strong id="player-total">0</strong></article>
+        <article><small>PROFILES</small><strong id="profile-total">0</strong></article>
+        <article class="pending-metric"><small>PENDING</small><strong id="pending-total">0</strong></article>
       </div>
     </section>
-    <div class="section-head"><div><h2>Live rooms</h2><p>Changes take effect immediately.</p></div><button id="refresh-button">↻ Refresh</button></div>
-    <section id="rooms" class="rooms"><div class="empty">No active rooms yet.</div></section>
+    <nav class="admin-nav" aria-label="Admin sections">
+      <a href="#payments">Payments</a><a href="#players">Players</a><a href="#rooms-section">Live rooms</a><a href="#records">Records</a><button id="refresh-button">↻ Refresh all</button>
+    </nav>
+    <section id="payments" class="panel payments-panel">
+      <div class="section-head"><div><p class="eyebrow">SUBSCRIPTIONS</p><h2>Payment approvals</h2><p>Confirm the transfer in OPay before approving. The website never requests a PIN or OTP.</p></div><div id="admin-account" class="account-chip">OPay · 9021538491 · FALCON</div></div>
+      <div id="payment-requests" class="payment-requests"><div class="empty compact">No payment requests yet.</div></div>
+    </section>
+    <section id="players" class="panel profiles-panel">
+      <div class="section-head"><div><p class="eyebrow">PLAYER DIRECTORY</p><h2>Profiles & access</h2><p>Edit player records or grant, extend, change, and remove subscription plans.</p></div><div class="profile-tools"><input id="profile-search" type="search" placeholder="Search players…"><button id="reset-leaderboard" class="danger-outline">Reset leaderboard</button></div></div>
+      <div class="profile-table-wrap"><table class="profile-table"><thead><tr><th>Player</th><th>Record</th><th>Profile controls</th><th>Subscription access</th><th></th></tr></thead><tbody id="profile-list"></tbody></table></div>
+    </section>
+    <section id="rooms-section">
+      <div class="section-head"><div><p class="eyebrow">LIVE OPERATIONS</p><h2>Open rooms</h2><p>Score, timer, mode, chat, and room changes take effect immediately.</p></div><span id="playing-total" class="status-chip">0 playing</span></div>
+      <div id="rooms" class="rooms"><div class="empty">No active rooms yet.</div></div>
+    </section>
+    <section id="records" class="panel records-panel">
+      <div class="section-head"><div><p class="eyebrow">RECORD BOOK</p><h2>Match history</h2><p id="records-status">Loading saved match records…</p></div></div>
+      <div class="record-totals"><article><small>MATCHES</small><strong id="match-total">0</strong></article><article><small>RECORDED PLAYERS</small><strong id="record-player-total">0</strong></article><article><small>ROLLS</small><strong id="roll-total">0</strong></article><article><small>BUSTS</small><strong id="bust-total">0</strong></article></div>
+      <div class="record-grids"><div><h3>Recent winners</h3><div id="recent-records" class="record-list"><p>No completed matches recorded yet.</p></div></div><div><h3>Leaderboard</h3><div id="record-leaderboard" class="record-list"><p>Leaderboard appears after the first match.</p></div></div></div>
+    </section>
     <p id="panel-error" class="error"></p>
   </main>
-
   <dialog id="login-dialog">
-    <form id="login-form">
-      <span class="login-crown">♛</span>
-      <p class="eyebrow">ADMIN ACCESS</p>
-      <h2>Welcome, Falcon.</h2>
-      <p>Enter the private key stored on the host computer.</p>
-      <label for="token-input">Private admin key</label>
-      <input id="token-input" type="password" autocomplete="current-password" required>
-      <button type="submit">Unlock control deck</button>
-      <small id="login-error" class="error"></small>
-    </form>
+    <form id="login-form"><span class="login-crown">♛</span><p class="eyebrow">ADMIN ACCESS</p><h2>Welcome, FALCON.</h2><p>Enter your private admin key. It stays only in this browser tab.</p><label for="token-input">Private admin key</label><input id="token-input" type="password" autocomplete="current-password" required><button type="submit">Unlock Control Room</button><small id="login-error" class="error"></small></form>
   </dialog>
-
-  <div id="toast" class="toast"></div>
-  <script src="/admin.js?v=33"></script>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/admin.js?v=320"></script>
 </body>
 </html>

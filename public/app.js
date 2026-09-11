@@ -1,5 +1,5 @@
 const $ = selector => document.querySelector(selector);
-const state = { mode: 'create', joinRole: 'player', code: null, playerId: null, sessionToken: null, rejoinCode: null, profileToken: localStorage.getItem('dice-night:profile-token'), profile: null, room: null, polling: null, acting: false, chatOpen: false, timelineOpen: false, chatSeen: null, lastChatId: null, celebratedWinner: null, leaderboardSort: 'wins', soundEnabled: localStorage.getItem('dice-night:sound') !== 'off', seenReactions: new Set() };
+const state = { mode: 'create', joinRole: 'player', code: null, playerId: null, sessionToken: null, rejoinCode: null, profileToken: localStorage.getItem('dice-night:profile-token'), profile: null, room: null, polling: null, acting: false, chatOpen: false, timelineOpen: false, chatSeen: null, lastChatId: null, previousTurnId: null, seenSpotlightId: null, seenPowerEffectId: null, celebratedWinner: null, leaderboardSort: 'wins', soundEnabled: localStorage.getItem('dice-night:sound') !== 'off', seenReactions: new Set(), subscriptionCatalog: null, selectedPlanId: null };
 let audioContext;
 const activeAudioNodes = new Set();
 let serverOffset = 0;
@@ -55,12 +55,16 @@ function renderProfile() {
     return;
   }
   $('#name-input').value = state.profile.displayName;
-  $('#profile-strip').innerHTML = `Level ${state.profile.level} <b>${escapeHtml(state.profile.displayName)}</b> · ${state.profile.stats.wins} wins <button id="profile-strip-button" type="button">View profile</button>`;
+  const membership = state.profile.subscription;
+  const membershipLabel = membership ? ` · <span class="profile-plan plan-${escapeHtml(membership.planId)}">${escapeHtml(membership.name)}</span>` : '';
+  $('#profile-strip').innerHTML = `Level ${state.profile.level} <b>${escapeHtml(state.profile.displayName)}</b> · ${state.profile.stats.wins} wins${membershipLabel} <button id="profile-strip-button" type="button">View profile</button>`;
   $('#profile-strip-button').addEventListener('click', () => $('#profile-dialog').showModal());
   const stats = state.profile.stats;
   const title = state.profile.featuredTitle;
   const featuredTitle = title ? `<div class="profile-featured-title ${title.variant === 'champion' ? 'champion-title' : 'founder-title'}"><span>${escapeHtml(title.icon)}</span>${escapeHtml(title.label)}</div>` : '';
-  $('#profile-card').innerHTML = `<h3>${escapeHtml(state.profile.displayName)} · Level ${state.profile.level}</h3>${featuredTitle}<p>Profile code <b>${escapeHtml(state.profile.profileCode)}</b> · ${state.profile.xp} XP</p><div class="profile-stats"><span>${stats.games} games</span><span>${stats.wins} wins</span><span>${stats.totalRolls} rolls</span><span>${stats.totalBanked} banked</span><span>Best bank ${stats.bestBank}</span></div><div class="achievement-grid">${state.profile.achievements.length ? state.profile.achievements.map(item => `<span class="${item.key === 'triple_champion' ? 'honor-achievement champion-title' : item.key === 'founder' ? 'honor-achievement founder-title' : ''}" title="${escapeHtml(item.description || '')}">${item.icon || '◆'} ${escapeHtml(item.name || item.key)}</span>`).join('') : '<span>Play a match to unlock badges</span>'}</div>`;
+  const subscriptionCard = membership ? `<div class="profile-membership plan-${escapeHtml(membership.planId)}"><span>ACTIVE PLAN</span><strong>${escapeHtml(membership.name)}</strong><small>Until ${new Date(membership.expiresAt).toLocaleDateString()}</small></div>` : '<button id="profile-view-plans" class="secondary-button" type="button">View subscription plans</button>';
+  $('#profile-card').innerHTML = `<h3>${escapeHtml(state.profile.displayName)} · Level ${state.profile.level}</h3>${featuredTitle}${subscriptionCard}<p>Profile code <b>${escapeHtml(state.profile.profileCode)}</b> · ${state.profile.xp} XP</p><div class="profile-stats"><span>${stats.games} games</span><span>${stats.wins} wins</span><span>${stats.totalRolls} rolls</span><span>${stats.totalBanked} banked</span><span>Best bank ${stats.bestBank}</span></div><div class="achievement-grid">${state.profile.achievements.length ? state.profile.achievements.map(item => `<span class="${item.key === 'triple_champion' ? 'honor-achievement champion-title' : item.key === 'founder' ? 'honor-achievement founder-title' : ''}" title="${escapeHtml(item.description || '')}">${item.icon || '◆'} ${escapeHtml(item.name || item.key)}</span>`).join('') : '<span>Play a match to unlock badges</span>'}</div>`;
+  $('#profile-view-plans')?.addEventListener('click', () => openSubscriptions());
 }
 
 async function loadProfile() {
@@ -102,6 +106,8 @@ function playSound(kind) {
       bust: [[150, 0, .22], [90, .12, .32]],
       bank: [[520, 0, .08], [720, .08, .08], [900, .16, .12]],
       chat: [[720, 0, .05], [900, .07, .08]],
+      turn: [[660, 0, .09], [880, .11, .12], [1100, .25, .18]],
+      spotlight: [[392, 0, .2], [523, .12, .2], [659, .24, .24], [784, .4, .3], [988, .62, .5]],
       win: [
         [392, 0, .24], [523, 0, .24], [659, 0, .24],
         [523, .34, .2], [659, .34, .2], [784, .34, .2],
@@ -286,6 +292,9 @@ function playerCard(player, index, room) {
   const titleVariant = title?.variant === 'champion' ? 'champion' : title?.variant === 'founder' ? 'founder' : '';
   const titleLabel = title ? `${title.icon} ${title.label}` : '';
   const titleBadge = title ? `<span class="player-title ${titleVariant}-title">${escapeHtml(title.icon)} ${escapeHtml(title.label)}</span>` : '';
+  const plan = player.profile?.subscription;
+  const planId = plan?.planId || '';
+  const planBadge = plan ? `<span class="player-plan-badge plan-${escapeHtml(planId)}">✦ ${escapeHtml(plan.name)}</span>` : '';
   const roundLimit = room.showdown?.turnLimit || 5;
   const progress = showdown
     ? Math.max(0, Math.min(100, (Number(player.turnsTaken || 0) / roundLimit) * 100))
@@ -300,14 +309,76 @@ function playerCard(player, index, room) {
     : showdown
       ? `${player.score} points, ${player.turnsTaken || 0} of ${roundLimit} turns complete`
       : `${player.score} of ${room.targetScore || room.mode?.targetScore || 100} points`;
-  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${bot ? 'bot' : ''} ${player.ready ? 'ready' : ''} ${titleVariant ? `honor-card ${titleVariant}-card` : ''} ${battle && player.score <= 0 ? 'eliminated' : ''}" ${active ? 'aria-current="true"' : ''} aria-label="${escapeHtml(displayName)}, ${escapeHtml(status)}${titleLabel ? `, ${escapeHtml(titleLabel)}` : ''}${active ? ', current turn' : ''}">
+  return `<article class="player-card ${active ? 'active' : ''} ${winner ? 'winner' : ''} ${admin ? 'admin' : ''} ${bot ? 'bot' : ''} ${player.ready ? 'ready' : ''} ${plan ? `subscriber-card plan-${escapeHtml(planId)}` : ''} ${titleVariant ? `honor-card ${titleVariant}-card` : ''} ${battle && player.score <= 0 ? 'eliminated' : ''}" ${active ? 'aria-current="true"' : ''} aria-label="${escapeHtml(displayName)}, ${escapeHtml(status)}${titleLabel ? `, ${escapeHtml(titleLabel)}` : ''}${active ? ', current turn' : ''}">
     <div class="player-top"><span class="avatar">${admin ? '♛' : bot ? '⚙' : escapeHtml(player.name[0].toUpperCase())}</span><span class="player-name">${escapeHtml(displayName)}</span>${admin ? '<span class="admin-badge">ADMIN</span>' : ''}${bot ? `<span class="bot-badge">${escapeHtml((player.botStyle || 'BOT').toUpperCase())}</span>` : ''}${player.id === room.meId ? '<span class="you">YOU</span>' : ''}<span class="player-perks" title="${player.frozen ? 'Next turn frozen' : player.shieldAvailable ? 'Safety Net available' : ''}">${player.frozen ? '❄' : player.shieldAvailable ? '◈' : ''}</span></div>
-    ${titleBadge}
+    ${titleBadge}${planBadge}
     <div class="player-score"><strong>${player.score}</strong><span>${room.phase === 'lobby' ? player.ready ? 'READY' : 'WAITING' : battle ? 'HEALTH' : showdown ? `${player.turnsTaken || 0}/${roundLimit} TURNS` : `/ ${room.targetScore || room.mode?.targetScore || 100}`}</span></div>
     ${room.phase !== 'lobby' ? `<div class="player-progress" aria-hidden="true"><span style="width:${progress}%"></span></div>` : ''}
     ${active ? '<span class="current-turn">CURRENT TURN</span>' : ''}
     ${canRemoveBot ? `<button class="bot-card-action" type="button" data-remove-bot="${escapeHtml(player.id)}" aria-label="Remove ${escapeHtml(displayName)}">Remove bot</button>` : ''}
   </article>`;
+}
+
+function activeSubscription(room = state.room) {
+  const seated = room?.players?.find(player => player.id === room.meId)?.profile?.subscription;
+  return seated || state.profile?.subscription || null;
+}
+
+function subscriptionBenefits(subscription) {
+  return new Set((subscription?.benefits || []).map(benefit => benefit.key));
+}
+
+function renderSubscriberCoach(room) {
+  const subscription = activeSubscription(room);
+  const benefits = subscriptionBenefits(subscription);
+  const panel = $('#subscriber-coach');
+  if (!subscription || room.phase !== 'playing' || !benefits.has('risk_coach')) {
+    panel.classList.add('hidden');
+    return;
+  }
+  const me = room.players.find(player => player.id === room.meId);
+  const normalRisk = room.risk?.percent ?? 16;
+  const deadlyRisk = room.riskDieRisk?.percent ?? 50;
+  let advice = `Normal is ${normalRisk}% risk. Deadly is ${deadlyRisk}% risk.`;
+  if (benefits.has('bank_hint')) {
+    advice = room.turnScore >= 20 || normalRisk >= 45
+      ? `Banking now protects ${room.turnScore} points. Another roll is the bold choice.`
+      : room.turnScore > 0
+      ? `${room.turnScore} is a light pot. Normal Die is the calmer build.`
+      : 'Start with the Normal Die unless you want a high-risk opening.';
+  }
+  const rivals = room.players.filter(player => player.id !== room.meId);
+  const leader = [...room.players].sort((left, right) => right.score - left.score)[0];
+  const modeTips = {
+    classic: 'Classic rewards patience: build with Normal, then protect a useful pot.',
+    blitz: 'Blitz moves fast. Small banks keep pressure on without wasting turns.',
+    marathon: 'Marathon is a long climb—avoid chasing one huge roll too early.',
+    showdown: 'Every turn matters in Showdown. A safe bank beats an empty turn.',
+    battle: 'In Battle, watch your health before choosing Deadly damage.'
+  };
+  if (benefits.has('endgame_warning')) {
+    const target = room.targetScore || room.mode?.targetScore || 100;
+    const threat = rivals.sort((left, right) => right.score - left.score)[0];
+    if (threat && room.mode?.id !== 'battle' && target - threat.score <= 15) {
+      advice = `${displayName(threat, room)} is only ${Math.max(0, target - threat.score)} points from the crown. This is an endgame turn.`;
+    }
+  }
+  if (benefits.has('mode_tip') && room.turnScore === 0) advice = modeTips[room.mode?.id] || modeTips.classic;
+  const chips = [`<span>Normal <b>${normalRisk}%</b></span>`, `<span>Deadly <b>${deadlyRisk}%</b></span>`];
+  if (benefits.has('streak_forecast')) chips.push(`<span>Bonus in <b>${room.nextBonusIn ?? 3}</b></span>`);
+  if (benefits.has('match_recap') && me) chips.push(`<span><b>${me.stats?.rolls || 0}</b> rolls · <b>${me.stats?.busts || 0}</b> busts</span>`);
+  if (benefits.has('leader_gap') && me && leader) {
+    const gap = leader.id === me.id ? 0 : Math.max(0, leader.score - me.score);
+    chips.push(`<span>${gap ? `Leader gap <b>${gap}</b>` : '<b>You lead</b> the table'}</span>`);
+  }
+  if (benefits.has('personal_best') && me) {
+    const careerBest = state.profile?.stats?.bestBank || 0;
+    chips.push(`<span>Best bank <b>${Math.max(careerBest, me.stats?.bestBank || 0)}</b></span>`);
+  }
+  $('#coach-plan').textContent = subscription.name.toUpperCase();
+  $('#coach-advice').textContent = advice;
+  $('#coach-stats').innerHTML = chips.join('');
+  panel.classList.remove('hidden');
 }
 
 function escapeHtml(value) {
@@ -365,6 +436,12 @@ function render(room, animateRoll = false) {
   renderTimeline(room);
   renderEventFeed(room);
   renderReactions(room);
+  renderSpotlight(room);
+  renderPowerEffect(room);
+  const viewerSubscription = activeSubscription(room);
+  $('#game-screen').dataset.plan = viewerSubscription?.planId || 'free';
+  const viewerBenefits = subscriptionBenefits(viewerSubscription);
+  document.querySelectorAll('.premium-reaction').forEach(button => button.classList.toggle('hidden', !viewerBenefits.has('reaction_pack')));
 
   const cards = room.players.map((player, index) => playerCard(player, index, room));
   while (cards.length < room.maxPlayers) cards.push('<article class="player-card empty">OPEN SEAT</article>');
@@ -418,6 +495,12 @@ function render(room, animateRoll = false) {
     const battle = room.mode.id === 'battle';
     const me = room.players.find(player => player.id === room.meId);
     const canAct = myTurn && (!battle || Number(me?.score) > 0);
+    const benefits = subscriptionBenefits(activeSubscription(room));
+    if (state.previousTurnId !== current.id && myTurn && benefits.has('turn_alerts')) {
+      playSound('turn');
+      navigator.vibrate?.([80, 50, 120]);
+    }
+    state.previousTurnId = current.id;
     $('#play-panel').dataset.gameSystem = battle ? 'battle' : 'royale';
     $('#active-game-label').textContent = battle ? 'GAME 2 · BATTLE DICE' : 'GAME 1 · ROYALE RACE';
     const currentName = displayName(current, room).toUpperCase();
@@ -436,12 +519,25 @@ function render(room, animateRoll = false) {
     $('#roll-button').setAttribute('aria-label', battle ? 'Roll the Normal Die to attack the next standing rival' : 'Roll the Normal Die');
     $('#double-button').setAttribute('aria-label', battle ? 'Roll the Deadly Risk Die to attack the next standing rival' : 'Roll the Deadly Risk Die');
     $('#freeze-button').disabled = room.paused || !canAct || !me || me.score < 5 || (battle && me.score <= 5) || room.freezeUsed || room.players.length < 2 || state.acting;
+    const canSpotlight = room.meRole === 'player' && benefits.has('spotlight_power');
+    const canHype = room.meRole === 'player' && benefits.has('hype_power');
+    const canChallenge = room.meRole === 'player' && benefits.has('challenge_power');
+    $('#hype-button').classList.toggle('hidden', !canHype);
+    $('#hype-button').disabled = room.paused || !me || me.hypeUsed || state.acting;
+    $('#hype-button').innerHTML = me?.hypeUsed ? '✓ Hype used' : '⚡ Hype Storm <small>once per match</small>';
+    $('#challenge-button').classList.toggle('hidden', !canChallenge);
+    $('#challenge-button').disabled = room.paused || !me || me.challengeUsed || state.acting;
+    $('#challenge-button').innerHTML = me?.challengeUsed ? '✓ Challenge used' : '⚔ Crown Challenge <small>once per match</small>';
+    $('#spotlight-button').classList.toggle('hidden', !canSpotlight);
+    $('#spotlight-button').disabled = room.paused || !me || me.spotlightUsed || state.acting;
+    $('#spotlight-button').innerHTML = me?.spotlightUsed ? '✓ Spotlight used' : '✦ Legend Spotlight <small>once per match</small>';
     $('#turn-pot-panel').classList.toggle('hidden', battle);
     $('#normal-risk-panel').classList.toggle('hidden', battle);
     $('#streak-chip').classList.toggle('hidden', battle);
     $('#battle-help').classList.toggle('hidden', !battle);
     $('#hold-button').classList.toggle('hidden', battle);
     renderDice(room, animateRoll);
+    renderSubscriberCoach(room);
   }
 
   if (room.phase === 'finished') {
@@ -509,6 +605,53 @@ function renderReactions(room) {
   });
 }
 
+function renderSpotlight(room) {
+  if (!room.spotlight?.id || room.spotlight.id === state.seenSpotlightId) return;
+  if ((room.powerEffect?.at || 0) >= (room.spotlight.at || 0)) {
+    state.seenSpotlightId = room.spotlight.id;
+    return;
+  }
+  state.seenSpotlightId = room.spotlight.id;
+  const takeover = $('#spotlight-takeover');
+  takeover.querySelector('small').textContent = 'LEGEND SPOTLIGHT';
+  takeover.querySelector('em').textContent = 'owns the night';
+  $('#spotlight-name').textContent = displayName({ id: room.spotlight.playerId, name: room.spotlight.name }, room).toUpperCase();
+  takeover.classList.remove('show');
+  void takeover.offsetWidth;
+  takeover.classList.add('show');
+  playSound('spotlight');
+  navigator.vibrate?.([80, 50, 160, 50, 240]);
+  setTimeout(() => takeover.classList.remove('show'), 2800);
+}
+
+function renderPowerEffect(room) {
+  const effect = room.powerEffect;
+  if (!effect?.id || effect.id === state.seenPowerEffectId) return;
+  if ((room.spotlight?.at || 0) > (effect.at || 0)) {
+    state.seenPowerEffectId = effect.id;
+    return;
+  }
+  state.seenPowerEffectId = effect.id;
+  const takeover = $('#spotlight-takeover');
+  const label = takeover.querySelector('small');
+  const ending = takeover.querySelector('em');
+  if (effect.type === 'challenge') {
+    label.textContent = 'CROWN CHALLENGE';
+    $('#spotlight-name').textContent = `${effect.name.toUpperCase()}  VS  ${effect.targetName.toUpperCase()}`;
+    ending.textContent = 'the crown is on the line';
+  } else {
+    label.textContent = 'HYPE STORM';
+    $('#spotlight-name').textContent = effect.name.toUpperCase();
+    ending.textContent = 'shook the whole table';
+  }
+  takeover.classList.remove('show');
+  void takeover.offsetWidth;
+  takeover.classList.add('show');
+  playSound('spotlight');
+  navigator.vibrate?.([70, 40, 100, 40, 150]);
+  setTimeout(() => takeover.classList.remove('show'), 2800);
+}
+
 function renderChat(room) {
   const messages = room.chat || [];
   const newest = messages.at(-1);
@@ -521,8 +664,10 @@ function renderChat(room) {
     const mine = message.playerId === room.meId;
     const admin = message.playerId === room.hostId;
     const displayName = mine ? 'You' : admin ? 'FALCON · ADMIN' : message.name;
+    const sender = [...room.players, ...(room.spectators || [])].find(person => person.id === message.playerId);
+    const planId = sender?.profile?.subscription?.planId;
     const time = new Date(message.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return `<article class="chat-message ${mine ? 'mine' : ''}"><div class="meta"><strong>${escapeHtml(displayName)}</strong><time>${time}</time></div><p>${escapeHtml(message.text)}</p></article>`;
+    return `<article class="chat-message ${mine ? 'mine' : ''} ${planId ? `subscriber-message plan-${escapeHtml(planId)}` : ''}"><div class="meta"><strong>${escapeHtml(displayName)}</strong><time>${time}</time></div><p>${escapeHtml(message.text)}</p></article>`;
   }).join('') : '<p class="empty-chat">No messages yet. Say hello 👋</p>';
   if (state.chatOpen) {
     state.chatSeen = messages.at(-1)?.id || null;
@@ -578,6 +723,9 @@ function updateTurnTimer() {
   timer.style.color = seconds <= 2.5 ? 'var(--danger)' : 'var(--ink)';
   fill.style.width = `${Math.min(100, (remaining / (state.room.turnDurationMs || 10000)) * 100)}%`;
   fill.style.background = seconds <= 2.5 ? 'var(--danger)' : 'var(--lime)';
+  const paceCue = subscriptionBenefits(activeSubscription()).has('timer_pace') && seconds <= 3;
+  timer.classList.toggle('subscriber-urgent', paceCue);
+  fill.classList.toggle('subscriber-urgent', paceCue);
 }
 
 setInterval(updateTurnTimer, 100);
@@ -661,6 +809,9 @@ $('#freeze-targets').addEventListener('click', async event => {
   $('#freeze-dialog').close();
   await doAction('freeze', button.dataset.playerId);
 });
+$('#spotlight-button').addEventListener('click', () => doAction('spotlight'));
+$('#hype-button').addEventListener('click', () => doAction('hype'));
+$('#challenge-button').addEventListener('click', () => doAction('challenge'));
 $('#restart-button').addEventListener('click', () => doAction('restart'));
 $('#view-results-button').addEventListener('click', openWinnerResults);
 $('#close-winner').addEventListener('click', () => $('#winner-dialog').close());
@@ -935,7 +1086,91 @@ $('#inline-admin-rooms').addEventListener('change', event => {
   }
 });
 
-$('#profile-button').addEventListener('click', () => $('#profile-dialog').showModal());
+function naira(value) {
+  return `₦${Number(value || 0).toLocaleString('en-NG')}`;
+}
+
+function renderSubscriptionPlans(catalog) {
+  state.subscriptionCatalog = catalog;
+  $('#payment-provider').textContent = catalog.account.provider;
+  $('#payment-account-number').textContent = catalog.account.accountNumber;
+  $('#payment-account-name').textContent = catalog.account.accountName;
+  $('#subscription-plans').innerHTML = catalog.plans.map(plan => `
+    <article class="subscription-plan plan-${escapeHtml(plan.id)} ${state.selectedPlanId === plan.id ? 'selected' : ''}">
+      <div class="plan-head"><span>${plan.durationDays} DAYS</span><strong>${escapeHtml(plan.name)}</strong><b>${naira(plan.price)}</b></div>
+      <ul>${plan.benefits.map(benefit => `<li class="${benefit.helper ? 'game-helper' : ''}"><span>${benefit.helper ? '◆' : '✓'}</span>${escapeHtml(benefit.label)}</li>`).join('')}</ul>
+      <button type="button" data-select-plan="${escapeHtml(plan.id)}">Choose ${escapeHtml(plan.name)}</button>
+    </article>`).join('');
+}
+
+async function loadSubscriptions() {
+  const catalog = await api('/api/subscriptions/plans');
+  renderSubscriptionPlans(catalog);
+  const membership = state.profile?.subscription;
+  $('#subscription-current').textContent = membership ? `${membership.name.toUpperCase()} · ACTIVE` : 'FREE PLAYER';
+  if (!state.profileToken || !state.profile) {
+    $('#subscription-status').textContent = 'Sign in to a player profile before sending a payment for approval.';
+    return;
+  }
+  const status = await api('/api/subscriptions/me', { headers: { Authorization: `Bearer ${state.profileToken}` } });
+  if (status.pending?.length) {
+    const pending = status.pending[0];
+    $('#subscription-status').textContent = `${pending.planName} payment is waiting for FALCON to approve.`;
+  } else if (status.subscription) {
+    $('#subscription-status').textContent = `${status.subscription.name} is active until ${new Date(status.subscription.expiresAt).toLocaleDateString()}.`;
+  } else {
+    $('#subscription-status').textContent = 'Choose a plan, pay the exact amount, then send your reference.';
+  }
+}
+
+async function openSubscriptions() {
+  $('#subscription-dialog').showModal();
+  $('#subscription-status').textContent = 'Loading plans…';
+  try { await loadSubscriptions(); }
+  catch (error) { $('#subscription-status').textContent = error.message; }
+}
+
+$('#subscription-button').addEventListener('click', openSubscriptions);
+$('#close-subscription').addEventListener('click', () => $('#subscription-dialog').close());
+$('#subscription-plans').addEventListener('click', event => {
+  const button = event.target.closest('[data-select-plan]');
+  if (!button) return;
+  const plan = state.subscriptionCatalog?.plans.find(item => item.id === button.dataset.selectPlan);
+  if (!plan) return;
+  state.selectedPlanId = plan.id;
+  renderSubscriptionPlans(state.subscriptionCatalog);
+  $('#subscription-plan-id').value = plan.id;
+  $('#selected-plan-summary').textContent = `${plan.name} · ${naira(plan.price)} · ${plan.durationDays} days`;
+  $('#payment-panel').classList.remove('hidden');
+  if (!state.profile) $('#subscription-status').textContent = 'Create or sign in to a player profile first, then return here.';
+});
+$('#copy-opay').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('#payment-account-number').textContent);
+  showToast('OPay account number copied');
+});
+$('#subscription-request-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!state.profileToken || !state.profile) {
+    $('#subscription-status').textContent = 'Sign in to a player profile before submitting payment.';
+    return;
+  }
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  submit.disabled = true;
+  try {
+    const result = await api('/api/subscriptions/requests', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${state.profileToken}` },
+      body: JSON.stringify({ planId: $('#subscription-plan-id').value, payerName: $('#payer-name').value, reference: $('#payment-reference').value })
+    });
+    $('#subscription-status').textContent = `${result.request.planName} request sent. FALCON will activate it after checking OPay.`;
+    event.currentTarget.reset();
+    $('#payment-panel').classList.add('hidden');
+  } catch (error) {
+    $('#subscription-status').textContent = error.message;
+  } finally { submit.disabled = false; }
+});
+
+$('#profile-button').addEventListener('click', async () => { await loadProfile(); $('#profile-dialog').showModal(); });
 $('#close-profile').addEventListener('click', () => $('#profile-dialog').close());
 $('#sound-toggle').addEventListener('click', () => setSoundEnabled(!state.soundEnabled));
 $('#leaderboard-button').addEventListener('click', () => {
@@ -999,7 +1234,7 @@ function dismissRoyaleIntro() {
   setIntroInert(false);
   $('#name-input').focus();
   intro.setAttribute('aria-hidden', 'true');
-  try { sessionStorage.setItem('dice-night:intro-v31', 'seen'); } catch { /* Session storage is optional. */ }
+  try { sessionStorage.setItem('dice-night:intro-v32', 'seen'); } catch { /* Session storage is optional. */ }
   playSound('bank');
 }
 
@@ -1009,7 +1244,7 @@ function setIntroInert(active) {
 
 let introVisible = true;
 try {
-  if (sessionStorage.getItem('dice-night:intro-v31') === 'seen') {
+  if (sessionStorage.getItem('dice-night:intro-v32') === 'seen') {
     $('#royale-intro').classList.add('leaving');
     $('#royale-intro').setAttribute('aria-hidden', 'true');
     introVisible = false;
