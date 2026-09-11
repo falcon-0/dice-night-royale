@@ -34,6 +34,70 @@ function formatDate(value) {
   return value ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Not set';
 }
 
+function formatBytes(value) {
+  const bytes = Number(value) || 0;
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let amount = bytes / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && amount >= 1024; index += 1) { amount /= 1024; unit = units[index]; }
+  return `${amount >= 100 ? amount.toFixed(0) : amount.toFixed(1)} ${unit}`;
+}
+
+function formatDuration(value) {
+  const seconds = Math.max(0, Number(value) || 0);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+function meterRows(items, emptyMessage = 'No traffic yet.') {
+  const entries = Object.entries(items || {}).sort((a, b) => b[1] - a[1]);
+  const maximum = Math.max(1, ...entries.map(([, value]) => value));
+  return entries.length ? entries.map(([label, value]) => `<div class="data-row"><span>${escapeHtml(label)}</span><div><i style="width:${Math.round(value / maximum * 100)}%"></i></div><strong>${Number(value).toLocaleString()}</strong></div>`).join('') : `<p class="analytics-empty">${escapeHtml(emptyMessage)}</p>`;
+}
+
+async function refreshAnalytics() {
+  const data = await api('/api/admin/analytics');
+  const traffic = data.traffic || {};
+  const today = traffic.today || {};
+  $('#live-total').textContent = traffic.liveVisitors || 0;
+  $('#traffic-live').textContent = traffic.liveVisitors || 0;
+  $('#traffic-visitors').textContent = today.visitors || 0;
+  $('#traffic-views').textContent = today.views || 0;
+  $('#traffic-all-visitors').textContent = traffic.allTime?.visitors || 0;
+  $('#traffic-all-views').textContent = traffic.allTime?.views || 0;
+  $('#analytics-updated').textContent = `Updated ${new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+
+  const trend = traffic.trend || [];
+  const chartMax = Math.max(1, ...trend.map(day => Math.max(day.views, day.visitors)));
+  $('#traffic-chart').innerHTML = trend.map(day => `<div class="chart-day" title="${day.visitors} visitors · ${day.views} views"><div class="chart-bars"><i class="visitor-bar" style="height:${Math.max(day.visitors ? 8 : 0, day.visitors / chartMax * 100)}%"></i><i class="view-bar" style="height:${Math.max(day.views ? 8 : 0, day.views / chartMax * 100)}%"></i></div><strong>${day.visitors}</strong><span>${new Date(`${day.date}T12:00:00`).toLocaleDateString([], { weekday: 'short' })}</span></div>`).join('');
+  $('#device-mix').innerHTML = meterRows(today.devices, 'Device mix appears after the first visit.');
+  $('#top-pages').innerHTML = meterRows(today.pages, 'Page views appear here.');
+
+  const activityNames = { room_create: 'Rooms made', room_join: 'Joins', room_rejoin: 'Rejoins', profile_create: 'New profiles', profile_login: 'Logins', subscription_request: 'Plan requests', roll: 'Normal rolls', risk_die: 'Risk rolls', bank: 'Banks', freeze: 'Freezes', chat: 'Chat messages', reaction: 'Reactions' };
+  $('#activity-events').innerHTML = Object.entries(data.activity?.today || {}).map(([key, value]) => `<div><small>${escapeHtml(activityNames[key] || key)}</small><strong>${Number(value).toLocaleString()}</strong></div>`).join('');
+
+  const server = data.server || {};
+  const game = data.game || {};
+  const systemUsed = Math.max(0, (server.systemMemory?.total || 0) - (server.systemMemory?.free || 0));
+  $('#server-health').innerHTML = [
+    ['Uptime', formatDuration(server.uptimeSeconds)],
+    ['Process RAM', formatBytes(server.processMemory?.rss)],
+    ['Heap used', `${formatBytes(server.processMemory?.heapUsed)} / ${formatBytes(server.processMemory?.heapTotal)}`],
+    ['System RAM', `${formatBytes(systemUsed)} / ${formatBytes(server.systemMemory?.total)}`],
+    ['Requests', Number(server.requestsSinceStart || 0).toLocaleString()],
+    ['Errors', Number(server.errorsSinceStart || 0).toLocaleString()],
+    ['CPU cores', server.cpuCores || '—'],
+    ['Node', server.node || '—'],
+    ['Live rooms', `${game.playingRooms || 0} playing / ${game.rooms || 0} open`],
+    ['Audience', `${game.seatedPlayers || 0} seated · ${game.spectators || 0} watching`],
+    ['Profiles', Number(game.profiles || 0).toLocaleString()],
+    ['Matches', Number(game.completedMatches || 0).toLocaleString()]
+  ].map(([label, value]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join('');
+}
+
 function dateInputValue(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -117,7 +181,7 @@ async function refreshRooms() {
 
 async function refreshAll() {
   try {
-    await Promise.all([refreshRooms(), refreshProfiles(), refreshSubscriptions(), refreshRecords()]);
+    await Promise.all([refreshRooms(), refreshProfiles(), refreshSubscriptions(), refreshRecords(), refreshAnalytics()]);
     $('#panel-error').textContent = '';
     return true;
   } catch (error) {
@@ -212,7 +276,7 @@ $('#login-form').addEventListener('submit', async event => {
     $('#login-dialog').close();
     clearInterval(liveTimer); clearInterval(recordsTimer);
     liveTimer = setInterval(() => Promise.all([refreshRooms(), refreshSubscriptions()]).catch(() => {}), 3000);
-    recordsTimer = setInterval(() => Promise.all([refreshProfiles(), refreshRecords()]).catch(() => {}), 15000);
+    recordsTimer = setInterval(() => Promise.all([refreshProfiles(), refreshRecords(), refreshAnalytics()]).catch(() => {}), 15000);
   } else $('#login-error').textContent = 'That key did not work.';
 });
 $('#refresh-button').addEventListener('click', refreshAll);
@@ -225,6 +289,6 @@ $('#lock-button').addEventListener('click', () => {
 (async function start() {
   if (token && await refreshAll()) {
     liveTimer = setInterval(() => Promise.all([refreshRooms(), refreshSubscriptions()]).catch(() => {}), 3000);
-    recordsTimer = setInterval(() => Promise.all([refreshProfiles(), refreshRecords()]).catch(() => {}), 15000);
+    recordsTimer = setInterval(() => Promise.all([refreshProfiles(), refreshRecords(), refreshAnalytics()]).catch(() => {}), 15000);
   } else $('#login-dialog').showModal();
 })();

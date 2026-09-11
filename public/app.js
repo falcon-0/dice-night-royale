@@ -3,6 +3,36 @@ const state = { mode: 'create', joinRole: 'player', code: null, playerId: null, 
 let audioContext;
 const activeAudioNodes = new Set();
 let serverOffset = 0;
+let trackedPage = null;
+
+function visitorId() {
+  const key = 'dice-night:visitor-id';
+  try {
+    let value = localStorage.getItem(key);
+    if (!value) {
+      value = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(key, value);
+    }
+    return value;
+  } catch {
+    return `visitor-${Math.random().toString(36).slice(2)}${Date.now()}`;
+  }
+}
+
+const anonymousVisitorId = visitorId();
+
+function trackTraffic(kind = 'heartbeat', page = (state.code || new URLSearchParams(location.search).has('room')) ? 'room' : 'home') {
+  fetch('/api/analytics/visit', {
+    method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visitorId: anonymousVisitorId, page, kind })
+  }).catch(() => {});
+}
+
+function trackPageView(page) {
+  if (trackedPage === page) return;
+  trackedPage = page;
+  trackTraffic('view', page);
+}
 
 const screens = { home: $('#home-screen'), game: $('#game-screen') };
 const pipMap = {
@@ -190,6 +220,7 @@ function enterGame(room) {
   screens.home.classList.add('hidden');
   screens.game.classList.remove('hidden');
   saveSession();
+  trackPageView('room');
   render(room);
   if (!state.polling) state.polling = setInterval(poll, 700);
 }
@@ -1299,6 +1330,9 @@ document.addEventListener('keydown', event => {
 
 updateSoundControl();
 loadProfile();
+trackPageView(new URLSearchParams(location.search).has('room') ? 'room' : 'home');
+setInterval(() => trackTraffic('heartbeat'), 60_000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) trackTraffic('heartbeat'); });
 
 (async function restoreOrPrefill() {
   const code = new URLSearchParams(location.search).get('room')?.toUpperCase();

@@ -7,6 +7,7 @@ const { LocalRecordStore } = require('./records');
 const { ProfileService, normalizeLoginIdentifier } = require('./profiles');
 const { BOT_STYLES, availableBotName, botStyle, chooseBotAction } = require('./bots');
 const { readJsonFile, writeJsonFile } = require('./json-store');
+const { TrafficAnalytics } = require('./analytics');
 
 const PORT = Number(process.env.PORT) || 4173;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -32,6 +33,7 @@ const recordsStore = new LocalRecordStore();
 const profiles = new ProfileService();
 const authAttempts = new Map();
 const botPlans = new Map();
+const trafficAnalytics = new TrafficAnalytics();
 
 function loadAdminToken() {
   if (process.env.ADMIN_TOKEN) return process.env.ADMIN_TOKEN;
@@ -1515,6 +1517,7 @@ function serveStatic(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
+  trafficAnalytics.trackRequest();
   try {
     const url = new URL(req.url, 'http://localhost');
     const parts = url.pathname.split('/').filter(Boolean);
@@ -1525,6 +1528,12 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/leaderboard') {
       return sendJson(res, 200, { version: APP_VERSION, leaderboard: await profiles.leaderboard(url.searchParams.get('limit'), url.searchParams.get('sort')) });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/analytics/visit') {
+      const { visitorId, page, kind } = await readJson(req);
+      trafficAnalytics.trackVisit({ visitorId, page, kind, userAgent: req.headers['user-agent'] || '' });
+      return sendJson(res, 200, { ok: true });
     }
 
     if (parts[0] === 'api' && parts[1] === 'subscriptions') {
@@ -1540,7 +1549,9 @@ const server = http.createServer(async (req, res) => {
         const profile = await profiles.authenticate(bearerToken(req));
         if (!profile) return sendJson(res, 401, { error: 'Sign in before submitting a payment.' });
         const payload = await readJson(req);
-        return sendJson(res, 201, { request: await profiles.requestSubscription(profile.id, payload) });
+        const request = await profiles.requestSubscription(profile.id, payload);
+        trafficAnalytics.trackEvent('subscription_request');
+        return sendJson(res, 201, { request });
       }
       return sendJson(res, 404, { error: 'Subscription route not found.' });
     }
@@ -1549,7 +1560,9 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && parts.length === 2) {
         throttleCreation(req);
         const { displayName, pin } = await readJson(req);
-        return sendJson(res, 201, await profiles.create(displayName, pin));
+        const created = await profiles.create(displayName, pin);
+        trafficAnalytics.trackEvent('profile_create');
+        return sendJson(res, 201, created);
       }
       if (req.method === 'POST' && parts[2] === 'login' && parts.length === 3) {
         const { code, pin } = await readJson(req);
@@ -1558,6 +1571,7 @@ const server = http.createServer(async (req, res) => {
         try {
           const login = await profiles.login(code, pin);
           clearAuthThrottle(req, scope);
+          trafficAnalytics.trackEvent('profile_login');
           return sendJson(res, 200, login);
         } catch (error) {
           if (error.status === 401) recordAuthFailure(req, scope);
@@ -1582,6 +1596,14 @@ const server = http.createServer(async (req, res) => {
       clearAuthThrottle(req, 'admin');
       if (req.method === 'GET' && parts[2] === 'profiles' && parts.length === 3) {
         return sendJson(res, 200, { profiles: await profiles.adminList() });
+      }
+      if (req.method === 'GET' && parts[2] === 'analytics' && parts.length === 3) {
+        const [profileList, records] = await Promise.all([profiles.adminList(), recordsStore.records(1)]);
+        return sendJson(res, 200, trafficAnalytics.summary({
+          rooms: [...rooms.values()],
+          profileCount: profileList.length,
+          matchCount: records.summary.matches || 0
+        }));
       }
       if (req.method === 'PATCH' && parts[2] === 'profiles' && parts[3] && parts[4] === 'subscription' && parts.length === 5) {
         const profileId = decodeURIComponent(parts[3]);
@@ -1661,6 +1683,7 @@ const server = http.createServer(async (req, res) => {
       const cleaned = cleanName(profile?.displayName || name);
       if (!cleaned) return sendJson(res, 400, { error: 'Enter your name.' });
       const { room, player } = createRoom(cleaned, profile);
+      trafficAnalytics.trackEvent('room_create');
       return sendJson(res, 201, { playerId: player.id, sessionToken: player.sessionToken, rejoinCode: player.rejoinCode, room: publicState(room, player.id) });
     }
 
@@ -1703,6 +1726,7 @@ const server = http.createServer(async (req, res) => {
           }
           bump(room);
           persistRooms();
+          trafficAnalytics.trackEvent('room_rejoin');
           return sendJson(res, 200, { playerId: returning.id, sessionToken: returning.sessionToken, rejoinCode: returning.rejoinCode, rejoined: true, room: publicState(room, returning.id) });
         }
         if (cleaned.toLowerCase() === 'falcon') return sendJson(res, 409, { error: 'FALCON is reserved for the room host.' });
@@ -1714,6 +1738,7 @@ const server = http.createServer(async (req, res) => {
           addEvent(room, 'spectator_join', room.message, { actorId: spectator.id });
           bump(room);
           persistRooms();
+          trafficAnalytics.trackEvent('room_join');
           return sendJson(res, 200, { playerId: spectator.id, sessionToken: spectator.sessionToken, rejoinCode: spectator.rejoinCode, room: publicState(room, spectator.id) });
         }
         if (room.players.length >= MAX_PLAYERS) return sendJson(res, 409, { error: 'The player table is full. Join as a spectator.' });
@@ -1726,6 +1751,7 @@ const server = http.createServer(async (req, res) => {
         addEvent(room, 'player_join', room.message, { actorId: player.id });
         bump(room);
         persistRooms();
+        trafficAnalytics.trackEvent('room_join');
         return sendJson(res, 200, { playerId: player.id, sessionToken: player.sessionToken, rejoinCode: player.rejoinCode, room: publicState(room, player.id) });
       }
 
@@ -1794,6 +1820,8 @@ const server = http.createServer(async (req, res) => {
         const { playerId, sessionToken, type, targetId } = await readJson(req);
         requireMember(room, playerId, sessionToken);
         action(room, playerId, type, targetId);
+        const trackedActions = { roll: 'roll', risk_die: 'risk_die', hold: 'bank', freeze: 'freeze', power_bank: 'bank' };
+        if (trackedActions[type]) trafficAnalytics.trackEvent(trackedActions[type]);
         return sendJson(res, 200, { room: publicState(room, playerId) });
       }
 
@@ -1801,6 +1829,7 @@ const server = http.createServer(async (req, res) => {
         const { playerId, sessionToken, text } = await readJson(req);
         requireMember(room, playerId, sessionToken);
         addChatMessage(room, playerId, text);
+        trafficAnalytics.trackEvent('chat');
         return sendJson(res, 200, { room: publicState(room, playerId) });
       }
 
@@ -1808,6 +1837,7 @@ const server = http.createServer(async (req, res) => {
         const { playerId, sessionToken, emoji } = await readJson(req);
         requireMember(room, playerId, sessionToken);
         addReaction(room, playerId, emoji);
+        trafficAnalytics.trackEvent('reaction');
         return sendJson(res, 200, { room: publicState(room, playerId) });
       }
     }
@@ -1815,6 +1845,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET') return serveStatic(req, res);
     sendJson(res, 404, { error: 'Not found.' });
   } catch (error) {
+    trafficAnalytics.trackError();
     sendJson(res, error.status || 500, { error: error.status ? error.message : 'Server error.' });
   }
 });
@@ -1879,7 +1910,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  server, startServer, recordsStore, profiles, rooms, retiredRooms, createRoom, action, adminAction,
+  server, startServer, recordsStore, profiles, trafficAnalytics, rooms, retiredRooms, createRoom, action, adminAction,
   publicState, riskFor, riskDieFor, riskDieOutcome, battleDieOutcome, applySafeRoll, addChatMessage, addReaction,
   addSpectator, addBot, expireTurnIfNeeded, processBotTurn, finishMatch, reconcileWinner, MODES,
   APP_VERSION

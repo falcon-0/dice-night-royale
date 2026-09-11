@@ -7,14 +7,16 @@ const testDataFile = path.join(os.tmpdir(), `dice-night-test-${process.pid}.json
 const testRetiredFile = path.join(os.tmpdir(), `dice-night-retired-test-${process.pid}.json`);
 const testProfileFile = path.join(os.tmpdir(), `dice-night-profiles-test-${process.pid}.json`);
 const testRecordsFile = path.join(os.tmpdir(), `dice-night-records-test-${process.pid}.json`);
+const testAnalyticsFile = path.join(os.tmpdir(), `dice-night-analytics-test-${process.pid}.json`);
 process.env.DATA_FILE = testDataFile;
 process.env.RETIRED_FILE = testRetiredFile;
 process.env.PROFILE_FILE = testProfileFile;
 process.env.RECORDS_FILE = testRecordsFile;
+process.env.ANALYTICS_FILE = testAnalyticsFile;
 process.env.ENABLE_ADMIN = '1';
 process.env.ADMIN_TOKEN = 'test-admin-key';
 const {
-  server, recordsStore, profiles, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor,
+  server, recordsStore, profiles, trafficAnalytics, rooms, createRoom, action, adminAction, publicState, riskFor, riskDieFor,
   riskDieOutcome, applySafeRoll, addChatMessage, addReaction, addSpectator,
   expireTurnIfNeeded, processBotTurn, reconcileWinner, battleDieOutcome, MODES, APP_VERSION
 } = require('../server');
@@ -33,6 +35,8 @@ test.after(() => {
   fs.rmSync(testRetiredFile, { force: true });
   fs.rmSync(testProfileFile, { force: true });
   fs.rmSync(testRecordsFile, { force: true });
+  fs.rmSync(testAnalyticsFile, { force: true });
+  fs.rmSync(`${testAnalyticsFile}.bak`, { force: true });
 });
 
 test.after(async () => {
@@ -47,6 +51,30 @@ async function request(pathname, body, method = 'POST', headers = {}) {
   });
   return { status: response.status, data: await response.json() };
 }
+
+test('admin analytics tracks anonymous traffic and hides private visitor data', async () => {
+  const before = trafficAnalytics.summary();
+  const first = await request('/api/analytics/visit', { visitorId: 'browser-test-visitor-001', page: 'home', kind: 'view' }, 'POST', { 'User-Agent': 'Mozilla/5.0 (iPhone; Mobile)' });
+  assert.equal(first.status, 200);
+  await request('/api/analytics/visit', { visitorId: 'browser-test-visitor-001', page: 'room', kind: 'heartbeat' }, 'POST', { 'User-Agent': 'Mozilla/5.0 (iPhone; Mobile)' });
+  await request('/api/analytics/visit', { visitorId: 'desktop-test-visitor-002', page: 'room', kind: 'view' }, 'POST', { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' });
+
+  const unauthorized = await request('/api/admin/analytics', null, 'GET');
+  assert.equal(unauthorized.status, 401);
+  const response = await request('/api/admin/analytics', null, 'GET', { Authorization: 'Bearer test-admin-key' });
+  assert.equal(response.status, 200);
+  assert.equal(response.data.traffic.today.views, before.traffic.today.views + 2);
+  assert.equal(response.data.traffic.liveVisitors, 2);
+  assert.equal(response.data.traffic.today.devices.phone >= 1, true);
+  assert.equal(response.data.traffic.today.devices.desktop >= 1, true);
+  assert.equal(response.data.server.status, 'healthy');
+  assert.equal(typeof response.data.server.processMemory.rss, 'number');
+  assert.equal(typeof response.data.server.uptimeSeconds, 'number');
+  const serialized = JSON.stringify(response.data);
+  assert.equal(serialized.includes('browser-test-visitor-001'), false);
+  assert.equal(serialized.includes('desktop-test-visitor-002'), false);
+  assert.equal(serialized.toLowerCase().includes('ipaddress'), false);
+});
 
 test('creates a private lobby with one host', () => {
   const { room, player } = createRoom('Ada');

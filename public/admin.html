@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,600;6..72,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin.css?v=320">
+  <link rel="stylesheet" href="/admin.css?v=321">
 </head>
 <body>
   <header>
@@ -19,6 +19,7 @@
     <section class="hero">
       <div><p class="eyebrow">PRIVATE ADMIN PANEL · V3.2</p><h1>Your game night,<br><em>at a glance.</em></h1><p>Approve plans, manage players, and control every live room from one place.</p></div>
       <div class="totals">
+        <article class="live-metric"><small>LIVE NOW</small><strong id="live-total">0</strong></article>
         <article><small>ROOMS</small><strong id="room-total">0</strong></article>
         <article><small>PLAYERS</small><strong id="player-total">0</strong></article>
         <article><small>PROFILES</small><strong id="profile-total">0</strong></article>
@@ -26,8 +27,25 @@
       </div>
     </section>
     <nav class="admin-nav" aria-label="Admin sections">
-      <a href="#payments">Payments</a><a href="#players">Players</a><a href="#rooms-section">Live rooms</a><a href="#records">Records</a><button id="refresh-button">↻ Refresh all</button>
+      <a href="#analytics">Traffic</a><a href="#payments">Payments</a><a href="#players">Players</a><a href="#rooms-section">Live rooms</a><a href="#records">Records</a><button id="refresh-button">↻ Refresh all</button>
     </nav>
+    <section id="analytics" class="panel analytics-panel">
+      <div class="section-head"><div><p class="eyebrow">PRIVATE LIVE ANALYTICS</p><h2>Traffic & server pulse</h2><p>See how people use Dice Night. Visitor IDs are anonymous and hashed; raw IP addresses are never stored.</p></div><span id="analytics-updated" class="status-chip">Waiting for data</span></div>
+      <div class="traffic-metrics">
+        <article><small>LIVE VISITORS</small><strong id="traffic-live">0</strong><span>active in 5 min</span></article>
+        <article><small>TODAY'S VISITORS</small><strong id="traffic-visitors">0</strong><span>unique devices</span></article>
+        <article><small>TODAY'S VIEWS</small><strong id="traffic-views">0</strong><span>page opens</span></article>
+        <article><small>ALL-TIME VISITORS</small><strong id="traffic-all-visitors">0</strong><span>anonymous</span></article>
+        <article><small>ALL-TIME VIEWS</small><strong id="traffic-all-views">0</strong><span>since tracking began</span></article>
+      </div>
+      <div class="analytics-grid">
+        <article class="analytics-card trend-card"><div class="analytics-title"><h3>Last 7 days</h3><span>Visitors / views</span></div><div id="traffic-chart" class="traffic-chart"></div></article>
+        <article class="analytics-card"><div class="analytics-title"><h3>Devices today</h3><span>By page view</span></div><div id="device-mix" class="data-list"></div></article>
+        <article class="analytics-card"><div class="analytics-title"><h3>Pages today</h3><span>Where players went</span></div><div id="top-pages" class="data-list"></div></article>
+        <article class="analytics-card activity-card"><div class="analytics-title"><h3>Game activity today</h3><span>Real server events</span></div><div id="activity-events" class="activity-grid"></div></article>
+        <article class="analytics-card server-card"><div class="analytics-title"><h3>Server health</h3><span id="server-state" class="healthy-dot">Healthy</span></div><div id="server-health" class="server-grid"></div></article>
+      </div>
+    </section>
     <section id="payments" class="panel payments-panel">
       <div class="section-head"><div><p class="eyebrow">SUBSCRIPTIONS</p><h2>Payment approvals</h2><p>Confirm the transfer in OPay before approving. The website never requests a PIN or OTP.</p></div><div id="admin-account" class="account-chip">OPay · 9021538491 · FALCON</div></div>
       <div id="payment-requests" class="payment-requests"><div class="empty compact">No payment requests yet.</div></div>
@@ -51,6 +69,6 @@
     <form id="login-form"><span class="login-crown">♛</span><p class="eyebrow">ADMIN ACCESS</p><h2>Welcome, FALCON.</h2><p>Enter your private admin key. It stays only in this browser tab.</p><label for="token-input">Private admin key</label><input id="token-input" type="password" autocomplete="current-password" required><button type="submit">Unlock Control Room</button><small id="login-error" class="error"></small></form>
   </dialog>
   <div id="toast" class="toast" role="status"></div>
-  <script src="/admin.js?v=320"></script>
+  <script src="/admin.js?v=321"></script>
 </body>
 </html>
