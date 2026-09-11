@@ -518,19 +518,27 @@ function render(room, animateRoll = false) {
     $('#double-button').disabled = room.paused || !canAct || state.acting;
     $('#roll-button').setAttribute('aria-label', battle ? 'Roll the Normal Die to attack the next standing rival' : 'Roll the Normal Die');
     $('#double-button').setAttribute('aria-label', battle ? 'Roll the Deadly Risk Die to attack the next standing rival' : 'Roll the Deadly Risk Die');
-    $('#freeze-button').disabled = room.paused || !canAct || !me || me.score < 5 || (battle && me.score <= 5) || room.freezeUsed || room.players.length < 2 || state.acting;
-    const canSpotlight = room.meRole === 'player' && benefits.has('spotlight_power');
-    const canHype = room.meRole === 'player' && benefits.has('hype_power');
-    const canChallenge = room.meRole === 'player' && benefits.has('challenge_power');
-    $('#hype-button').classList.toggle('hidden', !canHype);
-    $('#hype-button').disabled = room.paused || !me || me.hypeUsed || state.acting;
-    $('#hype-button').innerHTML = me?.hypeUsed ? '✓ Hype used' : '⚡ Hype Storm <small>once per match</small>';
-    $('#challenge-button').classList.toggle('hidden', !canChallenge);
-    $('#challenge-button').disabled = room.paused || !me || me.challengeUsed || state.acting;
-    $('#challenge-button').innerHTML = me?.challengeUsed ? '✓ Challenge used' : '⚔ Crown Challenge <small>once per match</small>';
-    $('#spotlight-button').classList.toggle('hidden', !canSpotlight);
-    $('#spotlight-button').disabled = room.paused || !me || me.spotlightUsed || state.acting;
-    $('#spotlight-button').innerHTML = me?.spotlightUsed ? '✓ Spotlight used' : '✦ Legend Spotlight <small>once per match</small>';
+    const powers = me?.powers || {};
+    const freeFreeze = benefits.has('royal_freeze') && !powers.royalFreezeUsed;
+    $('#freeze-button').disabled = room.paused || !canAct || !me || (!freeFreeze && (me.score < 5 || (battle && me.score <= 5))) || room.freezeUsed || room.players.length < 2 || state.acting;
+    $('#freeze-button').innerHTML = freeFreeze ? '♛ Royal Freeze <small>first one is free</small>' : '❄ Freeze a player <small>costs 5 pts</small>';
+    const powerButton = (id, key, unavailable, readyHtml, usedHtml) => {
+      const button = $(id);
+      const visible = room.meRole === 'player' && benefits.has(key);
+      button.classList.toggle('hidden', !visible);
+      button.disabled = room.paused || !canAct || unavailable || state.acting;
+      button.innerHTML = unavailable ? usedHtml : readyHtml;
+    };
+    powerButton('#time-boost-button', 'time_boost', powers.timeBoostUsed, '⏱ Time Boost <small>add 5 seconds now</small>', '✓ Time Boost used');
+    powerButton('#second-chance-button', 'second_chance', powers.secondChanceUsed || powers.secondChanceArmed, '↻ Arm Second Chance <small>save and bank the next bust</small>', powers.secondChanceArmed ? '↻ Second Chance armed' : '✓ Second Chance used');
+    powerButton('#power-bank-button', 'power_bank', powers.powerBankUsed || battle || room.turnScore < 1, '💎 Power Bank <small>bank pot and keep rolling</small>', powers.powerBankUsed ? '✓ Power Bank used' : battle ? 'Battle mode unavailable' : 'Build a pot first');
+    powerButton('#skull-guard-button', 'skull_guard', powers.skullGuardUsed || powers.skullGuardArmed, '🛡 Arm Skull Guard <small>next Risk skull becomes +10</small>', powers.skullGuardArmed ? '🛡 Skull Guard armed' : '✓ Skull Guard used');
+    const passives = [];
+    if (benefits.has('overtime_bank')) passives.push(`⏱ Timeout Saver: <b>${powers.overtimeBankUsed ? 'used' : 'ready'}</b>`);
+    if (benefits.has('ice_guard')) passives.push(`🛡 Ice Guard: <b>${powers.iceGuardUsed ? 'used' : 'ready'}</b>`);
+    if (benefits.has('royal_freeze')) passives.push(`♛ Royal Freeze: <b>${powers.royalFreezeUsed ? 'used' : 'ready'}</b>`);
+    $('#passive-perks').classList.toggle('hidden', !passives.length);
+    $('#passive-perks').innerHTML = passives.map(text => `<span>${text}</span>`).join('');
     $('#turn-pot-panel').classList.toggle('hidden', battle);
     $('#normal-risk-panel').classList.toggle('hidden', battle);
     $('#streak-chip').classList.toggle('hidden', battle);
@@ -571,7 +579,7 @@ function render(room, animateRoll = false) {
 }
 
 function renderEventFeed(room) {
-  const icons = { roll: '🎲', risk_die: '☠', battle_hit: '⚔', battle_bust: '💀', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', player_leave: '−', spectator_join: '◉', lobby: '↻', admin: '♛' };
+  const icons = { roll: '🎲', risk_die: '☠', battle_hit: '⚔', battle_bust: '💀', hot_streak: '🔥', bank: '💰', power_bank: '💎', bust: '💥', freeze: '❄', ice_guard: '🛡', time_boost: '⏱', timeout_save: '💰', second_chance: '↻', skull_guard: '🛡', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', player_leave: '−', spectator_join: '◉', lobby: '↻', admin: '♛' };
   const roomHost = room.players.find(player => player.id === room.hostId);
   const events = [...(room.events || [])].slice(-3).reverse();
   $('#event-feed').innerHTML = events.length ? events.map(item => {
@@ -582,7 +590,7 @@ function renderEventFeed(room) {
 }
 
 function renderTimeline(room) {
-  const icons = { roll: '🎲', risk_die: '☠', battle_hit: '⚔', battle_bust: '💀', hot_streak: '🔥', bank: '💰', bust: '💥', freeze: '❄', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', spectator_join: '◉', lobby: '↻', admin: '♛' };
+  const icons = { roll: '🎲', risk_die: '☠', battle_hit: '⚔', battle_bust: '💀', hot_streak: '🔥', bank: '💰', power_bank: '💎', bust: '💥', freeze: '❄', ice_guard: '🛡', time_boost: '⏱', timeout_save: '💰', second_chance: '↻', skull_guard: '🛡', timeout: '⏱', win: '🏆', start: '▶', ready: '✓', mode: '◆', player_join: '+', spectator_join: '◉', lobby: '↻', admin: '♛' };
   const events = [...(room.events || [])].reverse();
   const roomHost = room.players.find(player => player.id === room.hostId);
   $('#timeline-events').innerHTML = events.length ? events.map(item => {
@@ -635,19 +643,27 @@ function renderPowerEffect(room) {
   const takeover = $('#spotlight-takeover');
   const label = takeover.querySelector('small');
   const ending = takeover.querySelector('em');
-  if (effect.type === 'challenge') {
-    label.textContent = 'CROWN CHALLENGE';
-    $('#spotlight-name').textContent = `${effect.name.toUpperCase()}  VS  ${effect.targetName.toUpperCase()}`;
-    ending.textContent = 'the crown is on the line';
-  } else {
-    label.textContent = 'HYPE STORM';
-    $('#spotlight-name').textContent = effect.name.toUpperCase();
-    ending.textContent = 'shook the whole table';
-  }
+  const amount = Number(effect.amount || 0);
+  const copy = {
+    time_boost: ['TIME BOOST', '+5 SECONDS', `${effect.name} extended the clock`, '⏱'],
+    timeout_save: ['TIMEOUT SAVER', `${amount} BANKED`, `${effect.name} saved half the pot`, '💰'],
+    second_chance_arm: ['SECOND CHANCE', 'ARMED', `${effect.name} is protected from one bust`, '↻'],
+    second_chance: ['SECOND CHANCE', 'BUST RESCUED', amount ? `${amount} points safely banked` : `${effect.name} avoided the damage`, '↻'],
+    ice_guard: ['ICE GUARD', 'FREEZE BLOCKED', `${effect.name} keeps the next turn`, '🛡'],
+    power_bank: ['POWER BANK', `${amount} SECURED`, `${effect.name} keeps rolling`, '💎'],
+    skull_guard_arm: ['SKULL GUARD', 'ARMED', `${effect.name} is ready for one deadly skull`, '🛡'],
+    skull_guard: ['SKULL GUARD', 'SKULL → +10', `${effect.name} defeated the deadly risk`, '🛡'],
+    royal_freeze: ['ROYAL FREEZE', 'ZERO POINT COST', `${effect.targetName} loses the next turn`, '♛']
+  }[effect.type];
+  if (!copy) return;
+  label.textContent = copy[0];
+  $('#spotlight-name').textContent = copy[1].toUpperCase();
+  ending.textContent = copy[2];
+  takeover.querySelector('span').textContent = copy[3];
   takeover.classList.remove('show');
   void takeover.offsetWidth;
   takeover.classList.add('show');
-  playSound('spotlight');
+  playSound(effect.type === 'power_bank' || effect.type === 'timeout_save' ? 'bank' : 'spotlight');
   navigator.vibrate?.([70, 40, 100, 40, 150]);
   setTimeout(() => takeover.classList.remove('show'), 2800);
 }
@@ -746,6 +762,7 @@ async function doAction(type, targetId) {
     if (type === 'roll' || type === 'risk_die') playSound(room.lastOutcome?.busted ? 'bust' : 'safe');
     if (type === 'hold' && room.phase !== 'finished') playSound('bank');
     if (type === 'freeze') playSound('bank');
+    if (['time_boost', 'second_chance', 'power_bank', 'skull_guard'].includes(type)) playSound(type === 'power_bank' ? 'bank' : 'spotlight');
   } catch (error) {
     state.acting = false;
     $('#game-error').textContent = error.message;
@@ -809,9 +826,10 @@ $('#freeze-targets').addEventListener('click', async event => {
   $('#freeze-dialog').close();
   await doAction('freeze', button.dataset.playerId);
 });
-$('#spotlight-button').addEventListener('click', () => doAction('spotlight'));
-$('#hype-button').addEventListener('click', () => doAction('hype'));
-$('#challenge-button').addEventListener('click', () => doAction('challenge'));
+$('#time-boost-button').addEventListener('click', () => doAction('time_boost'));
+$('#second-chance-button').addEventListener('click', () => doAction('second_chance'));
+$('#power-bank-button').addEventListener('click', () => doAction('power_bank'));
+$('#skull-guard-button').addEventListener('click', () => doAction('skull_guard'));
 $('#restart-button').addEventListener('click', () => doAction('restart'));
 $('#view-results-button').addEventListener('click', openWinnerResults);
 $('#close-winner').addEventListener('click', () => $('#winner-dialog').close());

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,600;6..72,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=322">
+  <link rel="stylesheet" href="/styles.css?v=323">
 </head>
 <body>
   <section id="royale-intro" class="royale-intro" role="dialog" aria-modal="true" aria-labelledby="intro-title">
@@ -18,7 +18,7 @@
       <p>A NEW NIGHT BEGINS</p>
       <div class="intro-logo">DICE NIGHT <span>ROYALE</span></div>
       <h1 id="intro-title">Welcome to<br><em>version 3.2.</em></h1>
-      <div class="intro-features"><span>Night Club plans</span><span>Three social powers</span><span>Live game assistant</span></div>
+      <div class="intro-features"><span>Night Club plans</span><span>Seven real game powers</span><span>Live game assistant</span></div>
       <div class="intro-actions"><button id="enter-royale" class="primary-button">Enter Dice Night V3.2 <b>→</b></button><button id="intro-updates" class="text-button">See what’s new</button></div>
     </div>
     <small class="intro-admin">FALCON STUDIO PRESENTS</small>
@@ -172,10 +172,12 @@
             <div class="game-actions secondary-actions">
               <button id="hold-button" class="secondary-button action-button">Bank points</button>
               <button id="freeze-button" class="freeze-button action-button">❄ Freeze a player <small>costs 5 pts</small></button>
-              <button id="hype-button" class="premium-power-button hype-button action-button hidden">⚡ Hype Storm <small>once per match</small></button>
-              <button id="challenge-button" class="premium-power-button challenge-button action-button hidden">⚔ Crown Challenge <small>once per match</small></button>
-              <button id="spotlight-button" class="spotlight-button action-button hidden">✦ Legend Spotlight <small>once per match</small></button>
+              <button id="time-boost-button" class="premium-power-button action-button hidden">⏱ Time Boost <small>add 5 seconds</small></button>
+              <button id="second-chance-button" class="premium-power-button action-button hidden">↻ Arm Second Chance <small>save the next bust</small></button>
+              <button id="power-bank-button" class="premium-power-button action-button hidden">💎 Power Bank <small>bank and keep rolling</small></button>
+              <button id="skull-guard-button" class="premium-power-button challenge-button action-button hidden">🛡 Arm Skull Guard <small>turn a skull into +10</small></button>
             </div>
+            <div id="passive-perks" class="passive-perks hidden"></div>
             <div class="reaction-bar" aria-label="Live reactions">
               <button data-reaction="🔥">🔥</button><button data-reaction="😂">😂</button><button data-reaction="😱">😱</button><button data-reaction="🎉">🎉</button><button data-reaction="👏">👏</button><button data-reaction="❄️">❄️</button>
               <button class="premium-reaction hidden" data-reaction="👑" title="Subscriber reaction">👑</button><button class="premium-reaction hidden" data-reaction="⚡" title="Subscriber reaction">⚡</button><button class="premium-reaction hidden" data-reaction="🦅" title="Subscriber reaction">🦅</button>
@@ -247,8 +249,8 @@
     <p class="eyebrow">DICE NIGHT ROYALE · UPDATE 3.2</p>
     <h2>The Night Club update.</h2>
     <div class="update-list">
-      <article><span>NEW</span><div><strong>Dice Night Club plans</strong><p>Night, Royale, and Legend add premium style, reactions, sounds, statistics, and smart live game helpers while the dice stay fair.</p></div></article>
-      <article><span>NEW</span><div><strong>Three social powers</strong><p>Royale and Legend members can unleash Hype Storm, Crown Challenge, and Legend Spotlight once per match. They look huge but never change points or odds.</p></div></article>
+      <article><span>NEW</span><div><strong>Dice Night Club plans</strong><p>Night, Royale, and Legend now combine useful live helpers with limited powers that genuinely affect a match.</p></div></article>
+      <article><span>NEW</span><div><strong>Seven real match powers</strong><p>Buy time, save points on timeout, rescue a bust, block a Freeze, bank without ending your turn, defeat a skull, or Freeze free. Every paid tier now changes what you can do.</p></div></article>
       <article><span>NEW</span><div><strong>FALCON payment control</strong><p>Players submit their OPay transfer details, then FALCON confirms and activates access from the redesigned Admin Panel.</p></div></article>
       <article><span>NEW</span><div><strong>Ten Night Assistant helpers</strong><p>Turn alerts, risk coaching, pace cues, leader gaps, mode tips, personal bests, endgame warnings, and more appear live during play.</p></div></article>
       <article><span>NEW</span><div><strong>Two truly different dice</strong><p>Choose the cream Normal Die or the black-and-gold Deadly Risk Die on every Royale roll.</p></div></article>
@@ -378,7 +380,7 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
-  <div id="spotlight-takeover" class="spotlight-takeover" aria-live="assertive"><span>✦</span><small>LEGEND SPOTLIGHT</small><strong id="spotlight-name">A LEGEND</strong><em>owns the night</em></div>
-  <script src="/app.js?v=322"></script>
+  <div id="spotlight-takeover" class="spotlight-takeover" aria-live="assertive"><span>💎</span><small>REAL MATCH POWER</small><strong id="spotlight-name">POWER READY</strong><em>the table just changed</em></div>
+  <script src="/app.js?v=323"></script>
 </body>
 </html>

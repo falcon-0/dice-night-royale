@@ -12,19 +12,25 @@ const SUBSCRIPTION_PLANS = Object.freeze({
   night: Object.freeze({
     id: 'night', name: 'Night Pass', price: 200, durationDays: 7, rank: 1,
     benefits: Object.freeze([
-      { key: 'glass_card', label: 'Supporter glass player card' },
+      { key: 'time_boost', label: '+5-second Time Boost, once per match', power: true },
+      { key: 'overtime_bank', label: 'Timeout Saver banks half your pot, once per match', power: true },
       { key: 'turn_alerts', label: 'Louder smart turn alerts', helper: true },
       { key: 'risk_coach', label: 'Exact live risk coach', helper: true },
       { key: 'leader_gap', label: 'Live leader-gap tracker', helper: true },
       { key: 'timer_pace', label: 'Final-three-second pace cue', helper: true },
+      { key: 'detailed_stats', label: 'Detailed live statistics' },
       { key: 'reaction_pack', label: 'Exclusive reaction pack' },
-      { key: 'chat_accent', label: 'Premium chat accent' }
+      { key: 'chat_accent', label: 'Premium chat accent' },
+      { key: 'glass_card', label: 'Supporter glass player card' }
     ])
   }),
   royale: Object.freeze({
     id: 'royale', name: 'Royale', price: 500, durationDays: 30, rank: 2,
     benefits: Object.freeze([
-      { key: 'glass_card', label: 'Royale glass player card' },
+      { key: 'time_boost', label: '+5-second Time Boost, once per match', power: true },
+      { key: 'overtime_bank', label: 'Timeout Saver banks half your pot, once per match', power: true },
+      { key: 'second_chance', label: 'Second Chance rescues and banks one bust', power: true },
+      { key: 'ice_guard', label: 'Ice Guard blocks one Freeze attack', power: true },
       { key: 'turn_alerts', label: 'Louder smart turn alerts', helper: true },
       { key: 'risk_coach', label: 'Exact live risk coach', helper: true },
       { key: 'streak_forecast', label: 'Hot-streak forecast', helper: true },
@@ -33,17 +39,21 @@ const SUBSCRIPTION_PLANS = Object.freeze({
       { key: 'timer_pace', label: 'Final-three-second pace cue', helper: true },
       { key: 'mode_tip', label: 'Mode-specific strategy tip', helper: true },
       { key: 'personal_best', label: 'Personal-best tracker', helper: true },
-      { key: 'hype_power', label: 'Once-per-match Hype Storm power' },
-      { key: 'dice_skin', label: 'Premium dice skin' },
-      { key: 'entrance_animation', label: 'Animated room entrance' },
-      { key: 'sound_pack', label: 'Premium sound pack' },
-      { key: 'detailed_stats', label: 'Detailed live statistics' }
+      { key: 'detailed_stats', label: 'Detailed live statistics' },
+      { key: 'reaction_pack', label: 'Exclusive reaction pack' },
+      { key: 'glass_card', label: 'Royale glass player card' }
     ])
   }),
   legend: Object.freeze({
     id: 'legend', name: 'Legend', price: 1000, durationDays: 60, rank: 3,
     benefits: Object.freeze([
-      { key: 'glass_card', label: 'Legend glass player card' },
+      { key: 'time_boost', label: '+5-second Time Boost, once per match', power: true },
+      { key: 'overtime_bank', label: 'Timeout Saver banks half your pot, once per match', power: true },
+      { key: 'second_chance', label: 'Second Chance rescues and banks one bust', power: true },
+      { key: 'ice_guard', label: 'Ice Guard blocks one Freeze attack', power: true },
+      { key: 'power_bank', label: 'Power Bank saves the pot without ending your turn', power: true },
+      { key: 'skull_guard', label: 'Skull Guard turns one Risk skull into +10', power: true },
+      { key: 'royal_freeze', label: 'One Royal Freeze with zero point cost', power: true },
       { key: 'turn_alerts', label: 'Louder smart turn alerts', helper: true },
       { key: 'risk_coach', label: 'Exact live risk coach', helper: true },
       { key: 'streak_forecast', label: 'Hot-streak forecast', helper: true },
@@ -54,14 +64,11 @@ const SUBSCRIPTION_PLANS = Object.freeze({
       { key: 'mode_tip', label: 'Mode-specific strategy tip', helper: true },
       { key: 'personal_best', label: 'Personal-best tracker', helper: true },
       { key: 'endgame_warning', label: 'Rival endgame warning', helper: true },
-      { key: 'hype_power', label: 'Once-per-match Hype Storm power' },
-      { key: 'challenge_power', label: 'Once-per-match Crown Challenge power' },
-      { key: 'spotlight_power', label: 'Once-per-match Legend Spotlight power' },
-      { key: 'vip_aura', label: 'Animated VIP aura' },
+      { key: 'detailed_stats', label: 'Detailed live statistics' },
+      { key: 'reaction_pack', label: 'Exclusive reaction pack' },
       { key: 'winner_song', label: 'Winner-song choice' },
-      { key: 'premium_lobby', label: 'Premium lobby theme' },
       { key: 'custom_title', label: 'Admin-approved custom title' },
-      { key: 'detailed_stats', label: 'Detailed live statistics' }
+      { key: 'glass_card', label: 'Legend glass player card' }
     ])
   })
 });

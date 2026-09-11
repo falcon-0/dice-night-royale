@@ -536,7 +536,8 @@ test('subscriptions use fixed OPay plans and require FALCON approval', async () 
   assert.deepEqual(catalog.data.plans.map(plan => [plan.id, plan.price, plan.durationDays]), [
     ['night', 200, 7], ['royale', 500, 30], ['legend', 1000, 60]
   ]);
-  assert.equal(catalog.data.plans.find(plan => plan.id === 'legend').benefits.some(benefit => benefit.key === 'spotlight_power'), true);
+  assert.equal(catalog.data.plans.find(plan => plan.id === 'legend').benefits.some(benefit => benefit.key === 'power_bank'), true);
+  assert.equal(catalog.data.plans.find(plan => plan.id === 'legend').benefits.some(benefit => benefit.key === 'royal_freeze'), true);
 
   const unauthorized = await request('/api/subscriptions/requests', { planId: 'legend', payerName: 'Nobody', reference: '1234' });
   assert.equal(unauthorized.status, 401);
@@ -557,7 +558,8 @@ test('subscriptions use fixed OPay plans and require FALCON approval', async () 
   const approved = await request(`/api/admin/subscriptions/${pending.id}`, { status: 'approved' }, 'PATCH', admin);
   assert.equal(approved.status, 200);
   assert.equal(approved.data.subscription.planId, 'royale');
-  assert.equal(approved.data.subscription.benefits.some(benefit => benefit.key === 'hype_power'), true);
+  assert.equal(approved.data.subscription.benefits.some(benefit => benefit.key === 'second_chance'), true);
+  assert.equal(approved.data.subscription.benefits.some(benefit => benefit.key === 'ice_guard'), true);
   const status = await request('/api/subscriptions/me', null, 'GET', authorization);
   assert.equal(status.data.subscription.planId, 'royale');
 
@@ -569,24 +571,74 @@ test('subscriptions use fixed OPay plans and require FALCON approval', async () 
   assert.equal(removed.data.subscription, null);
 });
 
-test('subscriber powers are once-per-match social effects without score changes', () => {
+test('subscription powers create real once-per-match gameplay advantages', () => {
   const { room, player } = createRoom('Legend');
-  room.players.push({ id: 'rival', name: 'Rival', score: 30, ready: true, joinedAt: Date.now() });
+  const rival = { id: 'rival', name: 'Rival', score: 30, ready: true, frozen: false, powers: {}, joinedAt: Date.now() };
+  room.players.push(rival);
   room.phase = 'playing';
   room.matchId = 1;
-  room.turnIndex = 1;
-  player.profile = { level: 1, achievements: [], subscription: { planId: 'legend', benefits: [{ key: 'hype_power' }, { key: 'challenge_power' }, { key: 'spotlight_power' }] } };
-  const originalScores = room.players.map(candidate => candidate.score);
+  room.turnIndex = 0;
+  room.turnDeadline = Date.now() + 100000;
+  player.profile = { level: 1, achievements: [], subscription: { planId: 'legend', benefits: [
+    { key: 'time_boost' }, { key: 'second_chance' }, { key: 'power_bank' }, { key: 'skull_guard' }, { key: 'royal_freeze' }
+  ] } };
 
-  action(room, player.id, 'hype');
-  assert.equal(player.hypeUsed, true);
-  assert.equal(room.powerEffect.type, 'hype');
-  assert.throws(() => action(room, player.id, 'hype'), /already used/);
-  action(room, player.id, 'challenge');
-  assert.equal(room.powerEffect.targetId, 'rival');
-  action(room, player.id, 'spotlight');
-  assert.equal(player.spotlightUsed, true);
-  assert.deepEqual(room.players.map(candidate => candidate.score), originalScores);
+  const originalDeadline = room.turnDeadline;
+  action(room, player.id, 'time_boost');
+  assert.equal(room.turnDeadline, originalDeadline + 5000);
+  assert.throws(() => action(room, player.id, 'time_boost'), /already used/);
+
+  room.turnScore = 8;
+  action(room, player.id, 'power_bank');
+  assert.equal(player.score, 8);
+  assert.equal(room.turnScore, 0);
+  assert.equal(room.turnIndex, 0);
+
+  action(room, player.id, 'skull_guard');
+  action(room, player.id, 'risk_die', undefined, () => 0);
+  assert.equal(player.powers.skullGuardUsed, true);
+  assert.equal(room.turnScore, 10);
+  assert.equal(room.lastOutcome.guarded, true);
+
+  room.turnScore = 12;
+  action(room, player.id, 'second_chance');
+  action(room, player.id, 'roll', undefined, () => 0);
+  assert.equal(player.powers.secondChanceUsed, true);
+  assert.equal(player.score, 20);
+  assert.equal(room.turnIndex, 1);
+
+  room.turnIndex = 0;
+  room.turnDeadline = Date.now() + 100000;
+  room.freezeUsed = false;
+  player.score = 0;
+  action(room, player.id, 'freeze', rival.id);
+  assert.equal(player.score, 0);
+  assert.equal(player.powers.royalFreezeUsed, true);
+  assert.equal(rival.frozen, true);
+  rooms.delete(room.code);
+});
+
+test('Timeout Saver banks half a pot and Ice Guard blocks one Freeze', () => {
+  const { room, player } = createRoom('Night');
+  const rival = { id: 'rival', name: 'Rival', score: 5, ready: true, frozen: false, powers: {}, joinedAt: Date.now(), profile: { subscription: { benefits: [{ key: 'ice_guard' }] } } };
+  room.players.push(rival);
+  room.phase = 'playing';
+  room.turnIndex = 0;
+  room.turnScore = 9;
+  room.turnDeadline = Date.now() - 1;
+  player.profile = { subscription: { benefits: [{ key: 'overtime_bank' }] } };
+  assert.equal(expireTurnIfNeeded(room, Date.now()), true);
+  assert.equal(player.score, 4);
+  assert.equal(player.powers.overtimeBankUsed, true);
+
+  room.turnIndex = 0;
+  room.turnDeadline = Date.now() + 100000;
+  room.freezeUsed = false;
+  player.score = 5;
+  action(room, player.id, 'freeze', rival.id);
+  assert.equal(player.score, 0);
+  assert.equal(rival.frozen, false);
+  assert.equal(rival.powers.iceGuardUsed, true);
   rooms.delete(room.code);
 });
 

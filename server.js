@@ -94,6 +94,7 @@ function loadSavedRooms(saved) {
           player.spotlightUsed ??= false;
           player.hypeUsed ??= false;
           player.challengeUsed ??= false;
+          player.powers = player.powers && typeof player.powers === 'object' ? player.powers : {};
           player.isBot = Boolean(player.isBot);
           if (player.isBot) {
             player.botStyle = botStyle(player.botStyle).id;
@@ -235,6 +236,10 @@ function addEvent(room, type, text, details = {}) {
   room.events = room.events.slice(-80);
 }
 
+function setPowerEffect(room, type, player, details = {}) {
+  room.powerEffect = { id: crypto.randomUUID(), type, playerId: player.id, name: player.name, at: Date.now(), ...details };
+}
+
 function profileSummary(profile) {
   if (!profile) return null;
   return {
@@ -243,6 +248,10 @@ function profileSummary(profile) {
     subscription: profile.subscription || null,
     achievements: (profile.achievements || []).slice(-3).map(item => ({ key: item.key, name: item.name, icon: item.icon }))
   };
+}
+
+function benefitSetFor(player) {
+  return new Set((player?.profile?.subscription?.benefits || []).map(benefit => benefit.key));
 }
 
 function profileReferenceInEvent(event, playerIds) {
@@ -444,6 +453,7 @@ function addPlayer(room, name, profile = null) {
     spotlightUsed: false,
     hypeUsed: false,
     challengeUsed: false,
+    powers: {},
     isBot: false,
     profileId: profile?.id || null,
     profile: profileSummary(profile),
@@ -624,9 +634,9 @@ function publicState(room, playerId) {
     phase: room.phase,
     hostId: room.hostId,
     meId: playerId,
-    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile, turnsTaken, spotlightUsed, hypeUsed, challengeUsed, isBot, botStyle: style }) => ({
+    players: room.players.map(({ id, name, score, shieldAvailable, frozen, stats, ready, career, profile, turnsTaken, spotlightUsed, hypeUsed, challengeUsed, powers, isBot, botStyle: style }) => ({
       id, name, score, shieldAvailable, frozen, stats, ready, career, profile: profileSummary(profile),
-      turnsTaken: Number(turnsTaken || 0), spotlightUsed: Boolean(spotlightUsed), hypeUsed: Boolean(hypeUsed), challengeUsed: Boolean(challengeUsed), isBot: Boolean(isBot), botStyle: isBot ? botStyle(style).id : null
+      turnsTaken: Number(turnsTaken || 0), spotlightUsed: Boolean(spotlightUsed), hypeUsed: Boolean(hypeUsed), challengeUsed: Boolean(challengeUsed), powers: { ...(powers || {}) }, isBot: Boolean(isBot), botStyle: isBot ? botStyle(style).id : null
     })),
     spectators: (room.spectators || []).map(({ id, name, profile }) => ({ id, name, profile: profileSummary(profile) })),
     meRole: room.players.some(player => player.id === playerId) ? 'player' : 'spectator',
@@ -783,9 +793,27 @@ function nextTurn(room, message) {
 function expireTurnIfNeeded(room, now = Date.now()) {
   if (room.phase !== 'playing' || room.paused || !room.turnDeadline || room.turnDeadline > now) return false;
   const player = room.players[room.turnIndex];
-  const message = `${player.name} ran out of time — turn pot lost!`;
-  addEvent(room, 'timeout', message, { actorId: player.id });
-  nextTurn(room, message);
+  const benefits = benefitSetFor(player);
+  const canSave = room.mode !== 'battle' && room.turnScore > 0 && benefits.has('overtime_bank') && !player.powers?.overtimeBankUsed;
+  let message;
+  if (canSave) {
+    const saved = Math.max(1, Math.floor(room.turnScore / 2));
+    player.powers.overtimeBankUsed = true;
+    player.score += saved;
+    player.stats ??= { rolls: 0, busts: 0, bestBank: 0 };
+    player.stats.bestBank = Math.max(player.stats.bestBank, saved);
+    player.career ??= { games: 0, wins: 0, totalBanked: 0 };
+    player.career.totalBanked += saved;
+    player.matchBanked = (player.matchBanked || 0) + saved;
+    message = `⏱ ${player.name}'s Timeout Saver banked ${saved} points!`;
+    setPowerEffect(room, 'timeout_save', player, { amount: saved });
+    addEvent(room, 'timeout_save', message, { actorId: player.id, amount: saved });
+    if (!reconcileWinner(room, player, saved)) nextTurn(room, message);
+  } else {
+    message = `${player.name} ran out of time — turn pot lost!`;
+    addEvent(room, 'timeout', message, { actorId: player.id });
+    nextTurn(room, message);
+  }
   bump(room);
   persistRooms();
   if (room.phase === 'finished' && !room.matchArchived) {
@@ -913,6 +941,7 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
       candidate.spotlightUsed = false;
       candidate.hypeUsed = false;
       candidate.challengeUsed = false;
+      candidate.powers = {};
     });
     room.departedPlayers = [];
     room.lastOutcome = null;
@@ -944,6 +973,7 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
       player.spotlightUsed = false;
       player.hypeUsed = false;
       player.challengeUsed = false;
+      player.powers = {};
     });
     room.phase = 'lobby';
     room.turnIndex = 0;
@@ -1026,20 +1056,84 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
   if (room.mode === 'battle' && player.score <= 0) {
     throw Object.assign(new Error('You are knocked out of this Battle Dice match.'), { status: 409 });
   }
+
+  const benefits = benefitSetFor(player);
+  player.powers ??= {};
+  if (type === 'time_boost') {
+    if (!benefits.has('time_boost')) throw Object.assign(new Error('Time Boost is not available on your plan.'), { status: 403 });
+    if (player.powers.timeBoostUsed) throw Object.assign(new Error('You already used Time Boost this match.'), { status: 409 });
+    player.powers.timeBoostUsed = true;
+    room.turnDeadline = Math.max(Date.now(), room.turnDeadline || Date.now()) + 5000;
+    room.message = `⏱ ${player.name} activated Time Boost — 5 seconds added!`;
+    setPowerEffect(room, 'time_boost', player, { seconds: 5 });
+    addEvent(room, 'time_boost', room.message, { actorId: player.id, seconds: 5 });
+    bump(room); persistRooms(); return;
+  }
+  if (type === 'second_chance') {
+    if (!benefits.has('second_chance')) throw Object.assign(new Error('Second Chance is not available on your plan.'), { status: 403 });
+    if (player.powers.secondChanceUsed || player.powers.secondChanceArmed) throw Object.assign(new Error('Second Chance is already armed or used.'), { status: 409 });
+    player.powers.secondChanceArmed = true;
+    room.message = `↻ ${player.name} armed Second Chance for the next bust!`;
+    setPowerEffect(room, 'second_chance_arm', player);
+    addEvent(room, 'second_chance', room.message, { actorId: player.id, armed: true });
+    bump(room); persistRooms(); return;
+  }
+  if (type === 'skull_guard') {
+    if (!benefits.has('skull_guard')) throw Object.assign(new Error('Skull Guard is not available on your plan.'), { status: 403 });
+    if (player.powers.skullGuardUsed || player.powers.skullGuardArmed) throw Object.assign(new Error('Skull Guard is already armed or used.'), { status: 409 });
+    player.powers.skullGuardArmed = true;
+    room.message = `☠ ${player.name} armed Skull Guard for the next Deadly Risk roll!`;
+    setPowerEffect(room, 'skull_guard_arm', player);
+    addEvent(room, 'skull_guard', room.message, { actorId: player.id, armed: true });
+    bump(room); persistRooms(); return;
+  }
+  if (type === 'power_bank') {
+    if (!benefits.has('power_bank')) throw Object.assign(new Error('Power Bank is not available on your plan.'), { status: 403 });
+    if (room.mode === 'battle') throw Object.assign(new Error('Power Bank is for Royale Race modes.'), { status: 409 });
+    if (player.powers.powerBankUsed) throw Object.assign(new Error('You already used Power Bank this match.'), { status: 409 });
+    if (room.turnScore < 1) throw Object.assign(new Error('Build a turn pot before using Power Bank.'), { status: 409 });
+    const banked = room.turnScore;
+    player.powers.powerBankUsed = true;
+    player.score += banked;
+    player.stats ??= { rolls: 0, busts: 0, bestBank: 0 };
+    player.stats.bestBank = Math.max(player.stats.bestBank, banked);
+    player.career ??= { games: 0, wins: 0, totalBanked: 0 };
+    player.career.totalBanked += banked;
+    player.matchBanked = (player.matchBanked || 0) + banked;
+    room.turnScore = 0;
+    room.rollStreak = 0;
+    room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
+    room.message = `💎 ${player.name} Power Banked ${banked} points and keeps the turn!`;
+    setPowerEffect(room, 'power_bank', player, { amount: banked });
+    addEvent(room, 'power_bank', room.message, { actorId: player.id, amount: banked, score: player.score });
+    reconcileWinner(room, player, banked);
+    bump(room); persistRooms();
+    if (room.phase === 'finished' && !room.matchArchived) archiveCompletedMatch(room).catch(error => console.error('Could not record completed match:', error.message));
+    return;
+  }
   if (type === 'freeze') {
     const target = room.players.find(candidate => candidate.id === targetId);
     if (!target || target.id === playerId) throw Object.assign(new Error('Choose another player to freeze.'), { status: 400 });
     if (room.mode === 'battle' && target.score <= 0) throw Object.assign(new Error('Choose a player who is still standing.'), { status: 400 });
-    if (player.score < 5 || (room.mode === 'battle' && player.score === 5)) throw Object.assign(new Error(room.mode === 'battle' ? 'You need more than 5 health to freeze someone.' : 'You need 5 banked points to freeze someone.'), { status: 409 });
+    const freeFreeze = benefits.has('royal_freeze') && !player.powers.royalFreezeUsed;
+    if (!freeFreeze && (player.score < 5 || (room.mode === 'battle' && player.score === 5))) throw Object.assign(new Error(room.mode === 'battle' ? 'You need more than 5 health to freeze someone.' : 'You need 5 banked points to freeze someone.'), { status: 409 });
     if (room.freezeUsed) throw Object.assign(new Error('You already used Freeze this turn.'), { status: 409 });
     if (target.frozen) throw Object.assign(new Error(`${target.name} is already frozen.`), { status: 409 });
-    player.score -= 5;
+    if (freeFreeze) player.powers.royalFreezeUsed = true;
+    else player.score -= 5;
     player.matchFreezes = (player.matchFreezes || 0) + 1;
-    target.frozen = true;
+    target.powers ??= {};
+    const guardBlocks = benefitSetFor(target).has('ice_guard') && !target.powers.iceGuardUsed;
+    if (guardBlocks) target.powers.iceGuardUsed = true;
+    else target.frozen = true;
     room.freezeUsed = true;
     room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
-    room.message = `${player.name} spent 5 points to freeze ${target.name}'s next turn!`;
-    addEvent(room, 'freeze', room.message, { actorId: player.id, targetId: target.id, amount: 5 });
+    room.message = guardBlocks
+      ? `🛡 ${target.name}'s Ice Guard blocked ${player.name}'s Freeze!`
+      : `${player.name} ${freeFreeze ? 'used a free Royal Freeze on' : 'spent 5 points to freeze'} ${target.name}'s next turn!`;
+    if (guardBlocks) setPowerEffect(room, 'ice_guard', target, { attackerName: player.name });
+    else if (freeFreeze) setPowerEffect(room, 'royal_freeze', player, { targetName: target.name });
+    addEvent(room, guardBlocks ? 'ice_guard' : 'freeze', room.message, { actorId: player.id, targetId: target.id, amount: freeFreeze ? 0 : 5, blocked: guardBlocks });
     bump(room);
     persistRooms();
     return;
@@ -1058,7 +1152,31 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
     room.lastRollKind = outcome.dieKind;
     room.lastRoll = outcome.busted ? 1 : outcome.face;
     room.lastReward = outcome.busted ? null : outcome.damage;
-    if (outcome.busted) {
+    let eventType = outcome.busted ? 'battle_bust' : 'battle_hit';
+    let effectiveOutcome = outcome;
+    if (outcome.busted && outcome.dieKind === 'risk' && player.powers.skullGuardArmed) {
+      player.powers.skullGuardArmed = false;
+      player.powers.skullGuardUsed = true;
+      player.stats.busts += 1;
+      target.score -= 10;
+      player.matchBanked = (player.matchBanked || 0) + 10;
+      player.career.totalBanked += 10;
+      player.stats.bestBank = Math.max(player.stats.bestBank, 10);
+      room.lastRoll = 6;
+      room.lastReward = 10;
+      room.message = `🛡 ${player.name}'s Skull Guard turned a skull into 10 damage on ${target.name}!`;
+      setPowerEffect(room, 'skull_guard', player, { amount: 10, targetName: target.name });
+      effectiveOutcome = { ...outcome, busted: false, guarded: true, damage: 10, face: '+10' };
+      eventType = 'skull_guard';
+    } else if (outcome.busted && player.powers.secondChanceArmed) {
+      player.powers.secondChanceArmed = false;
+      player.powers.secondChanceUsed = true;
+      player.stats.busts += 1;
+      room.message = `↻ ${player.name}'s Second Chance cancelled the damage from that bust!`;
+      setPowerEffect(room, 'second_chance', player, { amount: 0 });
+      effectiveOutcome = { ...outcome, selfDamage: 0, secondChance: true };
+      eventType = 'second_chance';
+    } else if (outcome.busted) {
       player.stats.busts += 1;
       player.score -= outcome.selfDamage;
       room.message = outcome.dieKind === 'risk'
@@ -1071,8 +1189,8 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
       player.stats.bestBank = Math.max(player.stats.bestBank, outcome.damage);
       room.message = `${player.name} hit ${target.name} for ${outcome.damage} damage with the ${outcome.dieKind === 'risk' ? 'Deadly Risk Die' : 'Normal Die'}!`;
     }
-    room.lastOutcome = { ...outcome, actorId: player.id, targetId: outcome.busted ? null : target.id };
-    addEvent(room, outcome.busted ? 'battle_bust' : 'battle_hit', room.message, room.lastOutcome);
+    room.lastOutcome = { ...effectiveOutcome, actorId: player.id, targetId: effectiveOutcome.busted ? null : target.id };
+    addEvent(room, eventType, room.message, room.lastOutcome);
     if (!reconcileWinner(room)) nextTurn(room, room.message);
     bump(room);
     persistRooms();
@@ -1082,10 +1200,10 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
 
   if (type === 'roll' || type === 'risk_die') {
     const risky = type === 'risk_die';
-    const riskOutcome = risky ? riskDieOutcome(room) : null;
+    const riskOutcome = risky ? riskDieOutcome(room, randomInt) : null;
     const risk = riskOutcome?.risk || riskFor(room);
-    const busted = risky ? riskOutcome.busted : crypto.randomInt(100) < risk.percent;
-    const roll = busted ? 1 : risky ? riskOutcome.reward : crypto.randomInt(2, 7);
+    const busted = risky ? riskOutcome.busted : randomInt(100) < risk.percent;
+    const roll = busted ? 1 : risky ? riskOutcome.reward : randomInt(2, 7);
     room.lastRoll = busted ? 1 : risky ? 6 : roll;
     room.lastRollKind = risky ? 'risk' : 'normal';
     room.lastReward = risky && !busted ? roll : null;
@@ -1093,18 +1211,45 @@ function action(room, playerId, type, targetId, randomInt = crypto.randomInt) {
     player.stats.rolls += 1;
     if (busted) {
       player.stats.busts += 1;
-      const shielded = player.shieldAvailable;
-      let message;
-      if (shielded) {
-        player.shieldAvailable = false;
-        message = `${player.name} BUSTED — Safety Net blocked the −${risk.penalty} penalty!`;
+      if (risky && player.powers.skullGuardArmed) {
+        player.powers.skullGuardArmed = false;
+        player.powers.skullGuardUsed = true;
+        const bonus = applySafeRoll(room, 10);
+        room.lastRoll = 6;
+        room.lastReward = 10;
+        room.lastOutcome = { dieKind: 'risk', busted: false, guarded: true, face: '+10', reward: 10, bonus };
+        room.turnDeadline = Date.now() + (room.turnDurationMs || TURN_MS);
+        room.message = `🛡 ${player.name}'s Skull Guard turned a skull into +10!${bonus ? ' + 10 HOT STREAK!' : ''}`;
+        setPowerEffect(room, 'skull_guard', player, { amount: 10 });
+        addEvent(room, 'skull_guard', room.message, { actorId: player.id, points: 10, bonus });
+      } else if (player.powers.secondChanceArmed) {
+        player.powers.secondChanceArmed = false;
+        player.powers.secondChanceUsed = true;
+        const saved = room.turnScore;
+        player.score += saved;
+        player.stats.bestBank = Math.max(player.stats.bestBank, saved);
+        player.career ??= { games: 0, wins: 0, totalBanked: 0 };
+        player.career.totalBanked += saved;
+        player.matchBanked = (player.matchBanked || 0) + saved;
+        const message = `↻ ${player.name}'s Second Chance cancelled the bust and banked ${saved} points!`;
+        setPowerEffect(room, 'second_chance', player, { amount: saved });
+        room.lastOutcome = { dieKind: risky ? 'risk' : 'normal', busted: true, face: risky ? 'skull' : 1, reward: 0, penalty: 0, secondChance: true, saved };
+        addEvent(room, 'second_chance', message, { actorId: player.id, saved, risky });
+        if (!reconcileWinner(room, player, saved)) nextTurn(room, message);
       } else {
-        player.score -= risk.penalty;
-        message = `${player.name} BUSTED — pot lost and −${risk.penalty} points!`;
+        const shielded = player.shieldAvailable;
+        let message;
+        if (shielded) {
+          player.shieldAvailable = false;
+          message = `${player.name} BUSTED — Safety Net blocked the −${risk.penalty} penalty!`;
+        } else {
+          player.score -= risk.penalty;
+          message = `${player.name} BUSTED — pot lost and −${risk.penalty} points!`;
+        }
+        room.lastOutcome = { dieKind: risky ? 'risk' : 'normal', busted: true, face: risky ? 'skull' : 1, reward: 0, penalty: shielded ? 0 : risk.penalty, shielded };
+        addEvent(room, 'bust', message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, risky });
+        nextTurn(room, message);
       }
-      room.lastOutcome = { dieKind: risky ? 'risk' : 'normal', busted: true, face: risky ? 'skull' : 1, reward: 0, penalty: shielded ? 0 : risk.penalty, shielded };
-      addEvent(room, 'bust', message, { actorId: player.id, die: 1, penalty: shielded ? 0 : risk.penalty, risky });
-      nextTurn(room, message);
     } else {
       const points = roll;
       const bonus = applySafeRoll(room, points);
@@ -1165,6 +1310,7 @@ function resetMatch(room) {
     player.spotlightUsed = false;
     player.hypeUsed = false;
     player.challengeUsed = false;
+    player.powers = {};
   });
   room.phase = 'lobby';
   room.paused = false;
