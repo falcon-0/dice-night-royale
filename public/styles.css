@@ -455,13 +455,6 @@ dialog strong { color: var(--ink); }
 @keyframes spotlightTakeover { 0%{opacity:0;transform:scale(1.06)} 12%,76%{opacity:1;transform:scale(1)} 100%{opacity:0;transform:scale(.98)} }
 @keyframes spotlightStar { from{transform:rotate(-90deg) scale(.2)} to{transform:rotate(0) scale(1)} }
 
-.demo-nav-link { color:#bfe0ff!important; }
-.demo-entry-link { margin-top:10px;padding:11px 12px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;border:1px solid rgba(118,185,255,.22);border-radius:12px;color:var(--ink);background:rgba(74,145,232,.08);text-decoration:none;transition:.18s; }
-.demo-entry-link>span { width:34px;height:34px;display:grid;place-items:center;border-radius:50%;color:#0b1a26;background:#91caff; }
-.demo-entry-link div { display:grid;text-align:left; }
-.demo-entry-link b { font-size:.78rem; }
-.demo-entry-link small,.demo-entry-link em { color:var(--muted);font-size:.64rem;font-style:normal; }
-.demo-entry-link:hover { border-color:rgba(118,185,255,.48);background:rgba(74,145,232,.15);transform:translateY(-1px); }
 
 @media(max-width:520px){
   .topbar{width:100%;height:auto;min-height:64px;padding:9px 11px;gap:8px;align-items:flex-start}
@@ -469,7 +462,7 @@ dialog strong { color: var(--ink); }
   .brand>span:last-child{display:none}
   .top-actions{flex:1;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;justify-content:stretch}
   .top-actions .text-button{min-width:0;min-height:40px;padding:7px 3px;font-size:.67rem;text-align:center;white-space:nowrap}
-  .top-actions .sound-toggle span,.top-actions .leaderboard-link,.top-actions .demo-nav-link,.top-actions .falcon-control{display:none}
+  .top-actions .sound-toggle span,.top-actions .leaderboard-link,.top-actions .falcon-control{display:none}
   #profile-button,#subscription-button,#updates-button,#how-button{font-size:0}
   #profile-button:after{content:"Profile";font-size:.67rem}
   #subscription-button:after{content:"✦ Plans";font-size:.67rem}
